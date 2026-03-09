@@ -8,7 +8,7 @@ from pathlib import Path
 from .config import Config
 
 
-def build_redmod_layout(config: Config, packed_dir: Path) -> Path:
+def build_redmod_layout(config: Config, packed_dir: Path, modified_files: set[Path]) -> Path:
     """Assemble the REDmod folder layout for a localization mod.
 
     Structure:
@@ -18,8 +18,9 @@ def build_redmod_layout(config: Config, packed_dir: Path) -> Path:
                 en-us/
                     <patched CR2W .json files, preserving internal path structure>
 
-    The 'packed_dir' is the work/extracted directory containing patched files.
-    We copy only the CR2W .json files (not .json.json) that live under en-us paths.
+    Only includes CR2W .json files whose corresponding .json.json was actually
+    modified during patching. 'modified_files' contains resolved paths of the
+    CR2W .json files that had profanity patched.
     """
     mod_dir = config.output_dir / config.mod_name
     locale_dir = mod_dir / "localization" / "en-us"
@@ -49,20 +50,21 @@ def build_redmod_layout(config: Config, packed_dir: Path) -> Path:
             "Ensure extraction completed successfully."
         )
 
-    # Copy the contents of the first en-us directory into the mod layout
-    src_en_us = en_us_dirs[0]
+    # Copy only modified CR2W .json files from all en-us directories
     count = 0
-    for src_file in src_en_us.rglob("*.json"):
-        # Skip .json.json intermediates — only copy the CR2W .json files
-        if src_file.name.endswith(".json.json"):
-            continue
-        rel = src_file.relative_to(src_en_us)
-        dest = locale_dir / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_file, dest)
-        count += 1
+    for src_en_us in en_us_dirs:
+        for src_file in src_en_us.rglob("*.json"):
+            if src_file.name.endswith(".json.json"):
+                continue
+            if src_file.resolve() not in modified_files:
+                continue
+            rel = src_file.relative_to(src_en_us)
+            dest = locale_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, dest)
+            count += 1
 
-    print(f"  Copied {count} locale file(s) into REDmod layout")
+    print(f"  Copied {count} modified locale file(s) into REDmod layout")
     return mod_dir
 
 
@@ -112,8 +114,16 @@ def write_summary(
 
 
 def package_mod(config: Config, extract_dir: Path, patch_records: list) -> Path:
-    """Full packaging step: build REDmod layout from extracted files, create zip, write summary."""
-    mod_dir = build_redmod_layout(config, extract_dir)
+    """Full packaging step: build REDmod layout from modified files only, create zip, write summary."""
+    # Patch records store .json.json paths; the CR2W .json is the same path
+    # without the trailing .json (e.g. foo.json.json → foo.json)
+    modified_cr2w_files: set[Path] = set()
+    for r in patch_records:
+        json_json_path = Path(r.filepath)
+        cr2w_path = json_json_path.with_suffix("")  # strip trailing .json
+        modified_cr2w_files.add(cr2w_path.resolve())
+
+    mod_dir = build_redmod_layout(config, extract_dir, modified_cr2w_files)
     zip_path = create_zip(config, mod_dir)
 
     # Compute summary stats from patch records

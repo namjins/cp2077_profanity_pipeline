@@ -112,7 +112,7 @@ def run(
 
     # Step 4: Repack
     rprint("[bold]Step 4/5: Repacking archives...[/bold]")
-    repack_archives(config)
+    repack_archives(config, records)
 
     # Step 5: Package
     rprint("[bold]Step 5/5: Packaging mod...[/bold]")

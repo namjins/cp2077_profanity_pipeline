@@ -7,22 +7,34 @@ from .config import Config
 
 
 def find_locale_archives(game_dir: Path) -> list[Path]:
-    """Find .archive files that contain English localization data."""
-    archive_dir = game_dir / "archive" / "pc" / "content"
-    if not archive_dir.exists():
-        raise FileNotFoundError(f"Archive directory not found: {archive_dir}")
+    """Find .archive files that contain English localization data.
 
-    # Primary target: lang_en_text.archive
-    archives = list(archive_dir.glob("lang_en_text.archive"))
+    Searches both base game (archive/pc/content/) and Phantom Liberty
+    expansion (archive/pc/ep1/) directories.
+    """
+    search_dirs = [
+        ("base game", game_dir / "archive" / "pc" / "content"),
+        ("Phantom Liberty", game_dir / "archive" / "pc" / "ep1"),
+    ]
 
-    if not archives:
-        # Fallback: any archive with 'lang_en' in the name
-        archives = list(archive_dir.glob("*lang_en*.archive"))
+    archives: list[Path] = []
+    for label, archive_dir in search_dirs:
+        if not archive_dir.exists():
+            continue
+
+        found = list(archive_dir.glob("lang_en_text.archive"))
+        if not found:
+            # Fallback: any archive with 'lang_en' in the name
+            found = list(archive_dir.glob("*lang_en*.archive"))
+
+        if found:
+            print(f"  Found {len(found)} locale archive(s) in {label}: {archive_dir}")
+            archives.extend(found)
 
     if not archives:
         raise FileNotFoundError(
-            f"No English locale archive found in {archive_dir}. "
-            "Expected 'lang_en_text.archive'. "
+            f"No English locale archive found in {game_dir / 'archive' / 'pc'}. "
+            "Expected 'lang_en_text.archive' in content/ and/or ep1/. "
             "Check that game_dir points to your Cyberpunk 2077 installation."
         )
 
