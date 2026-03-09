@@ -19,7 +19,7 @@ CLI toolchain that extracts English text from Cyberpunk 2077 game files, detects
 
 ```bash
 # Clone and install
-git clone https://github.com/your-username/cp2077_profanity_pipeline.git
+git clone https://github.com/marcsnijman/cp2077_profanity_pipeline.git
 cd cp2077_profanity_pipeline
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
@@ -70,11 +70,11 @@ cp2077-profanity run \
 
 | Step | What happens |
 |------|-------------|
-| **1. Extract** | Unpacks `lang_en_text.archive` using WolvenKit `unbundle`, then converts CR2W files to JSON with `cr2w -s` |
+| **1. Extract** | Unpacks `lang_en_text.archive` from both base game and Phantom Liberty using WolvenKit `unbundle`, then converts CR2W files to JSON with `cr2w -s` |
 | **2. Scan** | Detects profanity using whole-word regex matching on normalized text |
-| **3. Patch** | Replaces matched words with asterisks of equal length (`damn` → `****`) |
-| **4. Repack** | Converts JSON back to CR2W with `cr2w -d`, then repacks with WolvenKit `pack` |
-| **5. Package** | Assembles REDmod layout (`localization/en-us/`), writes `info.json`, creates `.zip` |
+| **3. Patch** | Replaces matched words with asterisks matching the original character length, including elongation (`fuuuuuck` → `*********`) |
+| **4. Repack** | Converts patched JSON back to CR2W with `cr2w -d`, then repacks with WolvenKit `pack` |
+| **5. Package** | Assembles REDmod layout (`localization/en-us/`) with only modified files, writes `info.json`, creates `.zip` |
 
 ## Output
 
@@ -108,3 +108,4 @@ Edit `profanity_list.txt` to customize which words are filtered:
 - Whole-word boundaries prevent false positives (`classic` does not match `ass`)
 - **Elongation detection:** runs of 3+ identical characters are collapsed before matching (`fuuuuuck` → `fuck`), while legitimate double letters (`good`, `ass`) are preserved
 - Asterisks replace the full original character span, including elongation (`fffffffuuuuuuuuck` → `*****************`)
+- Only modified files are included in the final REDmod package to minimize mod size
