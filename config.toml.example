@@ -1,0 +1,21 @@
+[wolvenkit]
+# Path to WolvenKit CLI executable
+cli_path = "C:\\Tools\\WolvenKit\\WolvenKit.CLI.exe"
+
+[paths]
+# Path to Cyberpunk 2077 game directory
+game_dir = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Cyberpunk 2077"
+# Working directory for extracted files
+work_dir = "./work"
+# Output directory for final mod package
+output_dir = "./output"
+
+[mod]
+# Mod metadata for info.json
+name = "CP2077ProfanityFilter"
+version = "1.0.0"
+description = "Replaces profane words in English localization with asterisks"
+
+[profanity]
+# Path to profanity wordlist
+wordlist = "./profanity_list.txt"
