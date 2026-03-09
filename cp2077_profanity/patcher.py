@@ -26,7 +26,8 @@ def patch_value(value: str, pattern: regex.Pattern) -> tuple[str, list[str]]:
     """Apply asterisk replacement to all profanity matches in a string value.
 
     Normalizes elongation before matching (e.g. "fuuuuuck" → detected as "fuck"),
-    then replaces the full original span with asterisks of equal character length.
+    then replaces the full original span with asterisks of equal character length
+    (e.g. "fuuuuuck" → "*********").
 
     Returns the patched string and a list of normalized words that were replaced.
     """

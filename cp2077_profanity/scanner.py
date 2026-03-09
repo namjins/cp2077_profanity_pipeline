@@ -42,6 +42,10 @@ def normalize_elongation(text: str) -> tuple[str, list[int], list[int]]:
     double letters (e.g. "good" has "oo" = 2 chars, stays as-is).
     Runs of 3+ are elongation (e.g. "gooood" → "god", "fuuuuuck" → "fuck").
 
+    The span mapping allows original text replacement: when matching "fuck" in
+    normalized "fuuuuuck", the span mapping shows the match covers all 9 original
+    characters, so the replacement becomes "*********" (9 asterisks).
+
     Returns:
         normalized   — the collapsed string
         span_starts  — span_starts[i] is the original index where normalized char i begins
