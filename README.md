@@ -19,7 +19,7 @@ CLI toolchain that extracts English text from Cyberpunk 2077 game files, detects
 
 ```bash
 # Clone and install
-git clone https://github.com/marcsnijman/cp2077_profanity_pipeline.git
+git clone https://github.com/namjins/cp2077_profanity_pipeline.git
 cd cp2077_profanity_pipeline
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
