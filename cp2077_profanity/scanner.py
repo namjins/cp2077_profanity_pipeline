@@ -13,6 +13,7 @@ class ScanHit:
 
     filepath: Path
     string_key: str
+    string_id: str | None  # numeric stringId linking to voice audio files
     field: str  # "femaleVariant" or "maleVariant"
     matched_word: str
     original_value: str
@@ -148,6 +149,7 @@ def scan_json_file(
 
         # Use secondaryKey as the human-readable identifier, fall back to $type
         entry_key = entry.get("secondaryKey", entry.get("$type", "unknown"))
+        string_id = entry.get("stringId")
 
         for field_name in ("femaleVariant", "maleVariant"):
             value = entry.get(field_name)
@@ -160,6 +162,7 @@ def scan_json_file(
                     ScanHit(
                         filepath=filepath,
                         string_key=str(entry_key),
+                        string_id=str(string_id) if string_id is not None else None,
                         field=field_name,
                         matched_word=match.group(),
                         original_value=value,

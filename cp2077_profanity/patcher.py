@@ -16,6 +16,7 @@ class PatchRecord:
 
     filepath: str
     string_key: str
+    string_id: str | None  # numeric stringId linking to voice audio files
     field: str
     original: str
     replacement: str
@@ -71,6 +72,7 @@ def patch_json_file(
             continue
 
         entry_key = entry.get("secondaryKey", entry.get("$type", "unknown"))
+        string_id = entry.get("stringId")
 
         for field_name in ("femaleVariant", "maleVariant"):
             value = entry.get(field_name)
@@ -83,6 +85,7 @@ def patch_json_file(
                     PatchRecord(
                         filepath=str(filepath),
                         string_key=str(entry_key),
+                        string_id=str(string_id) if string_id is not None else None,
                         field=field_name,
                         original=value,
                         replacement=patched,
@@ -104,9 +107,9 @@ def write_patch_log(records: list[PatchRecord], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["filepath", "string_key", "field", "original", "replacement"])
+        writer.writerow(["filepath", "string_key", "string_id", "field", "original", "replacement"])
         for rec in records:
-            writer.writerow([rec.filepath, rec.string_key, rec.field, rec.original, rec.replacement])
+            writer.writerow([rec.filepath, rec.string_key, rec.string_id or "", rec.field, rec.original, rec.replacement])
 
 
 def patch_all(
