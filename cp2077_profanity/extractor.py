@@ -4,6 +4,8 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
 from .config import Config
 
 
@@ -91,14 +93,23 @@ def convert_cr2w_to_json(config: Config, extract_dir: Path) -> list[Path]:
             return None
         return expected_output if expected_output.exists() else None
 
-    print(f"  Converting {len(cr2w_files)} file(s) with {config.workers} worker(s)...")
     produced: list[Path] = []
-    with ThreadPoolExecutor(max_workers=config.workers) as executor:
-        futures = {executor.submit(_convert_one, f): f for f in cr2w_files}
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                produced.append(result)
+    with Progress(
+        TextColumn("  [bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+    ) as progress:
+        task = progress.add_task(
+            f"Converting CR2W ({config.workers} workers)", total=len(cr2w_files)
+        )
+        with ThreadPoolExecutor(max_workers=config.workers) as executor:
+            futures = {executor.submit(_convert_one, f): f for f in cr2w_files}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    produced.append(result)
+                progress.advance(task)
 
     return sorted(produced)
 

@@ -4,6 +4,8 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
 from .config import Config
 
 
@@ -33,11 +35,20 @@ def convert_json_to_cr2w(config: Config, extract_dir: Path, modified_files: set[
             if result.stderr:
                 print(f"  stderr: {result.stderr.strip()}")
 
-    print(f"  Deserializing {len(json_json_files)} file(s) with {config.workers} worker(s)...")
-    with ThreadPoolExecutor(max_workers=config.workers) as executor:
-        futures = {executor.submit(_deserialize_one, f): f for f in json_json_files}
-        for future in as_completed(futures):
-            future.result()
+    with Progress(
+        TextColumn("  [bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+    ) as progress:
+        task = progress.add_task(
+            f"Deserializing CR2W ({config.workers} workers)", total=len(json_json_files)
+        )
+        with ThreadPoolExecutor(max_workers=config.workers) as executor:
+            futures = {executor.submit(_deserialize_one, f): f for f in json_json_files}
+            for future in as_completed(futures):
+                future.result()
+                progress.advance(task)
 
 
 def repack_archives(config: Config, patch_records: list | None = None) -> Path:
