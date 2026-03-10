@@ -19,3 +19,8 @@ description = "Replaces profane words in English localization with asterisks"
 [profanity]
 # Path to profanity wordlist
 wordlist = "./profanity_list.txt"
+
+[performance]
+# Number of parallel workers for CR2W conversion (cr2w -s and cr2w -d)
+# Increase for faster extraction/repacking on machines with more CPU cores
+workers = 8

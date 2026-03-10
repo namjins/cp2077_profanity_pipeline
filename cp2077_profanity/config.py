@@ -17,6 +17,7 @@ class Config:
     mod_version: str = "1.0.0"
     mod_description: str = "Replaces profane words in English localization with asterisks"
     wordlist_path: Path = Path("./profanity_list.txt")
+    workers: int = 8
 
 
 def load_config(config_path: Path | None = None, **overrides: str) -> Config:
@@ -50,6 +51,10 @@ def load_config(config_path: Path | None = None, **overrides: str) -> Config:
         prof = data.get("profanity", {})
         if "wordlist" in prof:
             cfg.wordlist_path = Path(prof["wordlist"])
+
+        perf = data.get("performance", {})
+        if "workers" in perf:
+            cfg.workers = int(perf["workers"])
 
     # Apply CLI overrides
     if "wolvenkit_path" in overrides and overrides["wolvenkit_path"]:

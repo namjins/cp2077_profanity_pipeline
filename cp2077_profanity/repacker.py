@@ -1,6 +1,7 @@
 """Repack modified files back into .archive format using WolvenKit CLI."""
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .config import Config
@@ -24,14 +25,19 @@ def convert_json_to_cr2w(config: Config, extract_dir: Path, modified_files: set[
         print("  Warning: no .json.json files found to deserialize.")
         return
 
-    for jj_file in json_json_files:
-        print(f"  Deserializing: {jj_file.name}")
+    def _deserialize_one(jj_file: Path) -> None:
         cmd = [str(config.wolvenkit_cli), "cr2w", "-d", str(jj_file)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"  Warning: cr2w deserialization failed for {jj_file.name}")
             if result.stderr:
                 print(f"  stderr: {result.stderr.strip()}")
+
+    print(f"  Deserializing {len(json_json_files)} file(s) with {config.workers} worker(s)...")
+    with ThreadPoolExecutor(max_workers=config.workers) as executor:
+        futures = {executor.submit(_deserialize_one, f): f for f in json_json_files}
+        for future in as_completed(futures):
+            future.result()
 
 
 def repack_archives(config: Config, patch_records: list | None = None) -> Path:

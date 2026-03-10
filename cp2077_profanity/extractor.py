@@ -1,6 +1,7 @@
 """Extract English localization JSON files from Cyberpunk 2077 archives using WolvenKit CLI."""
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .config import Config
@@ -79,18 +80,25 @@ def convert_cr2w_to_json(config: Config, extract_dir: Path) -> list[Path]:
         print("  Warning: no CR2W locale files found to convert.")
         return []
 
-    produced: list[Path] = []
-    for cr2w_file in cr2w_files:
+    def _convert_one(cr2w_file: Path) -> Path | None:
         expected_output = cr2w_file.parent / (cr2w_file.name + ".json")
-        print(f"  Converting: {cr2w_file.name}")
         cmd = [str(config.wolvenkit_cli), "cr2w", "-s", str(cr2w_file)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"  Warning: cr2w conversion failed for {cr2w_file.name}")
             if result.stderr:
                 print(f"  stderr: {result.stderr.strip()}")
-        elif expected_output.exists():
-            produced.append(expected_output)
+            return None
+        return expected_output if expected_output.exists() else None
+
+    print(f"  Converting {len(cr2w_files)} file(s) with {config.workers} worker(s)...")
+    produced: list[Path] = []
+    with ThreadPoolExecutor(max_workers=config.workers) as executor:
+        futures = {executor.submit(_convert_one, f): f for f in cr2w_files}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                produced.append(result)
 
     return sorted(produced)
 
