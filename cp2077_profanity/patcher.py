@@ -7,7 +7,7 @@ from pathlib import Path
 
 import regex
 
-from .scanner import build_pattern, load_wordlist, normalize_elongation
+from .scanner import _extract_entries, build_pattern, load_wordlist, normalize_elongation
 
 
 @dataclass
@@ -51,8 +51,8 @@ def patch_json_file(
 ) -> list[PatchRecord]:
     """Patch a single locale JSON file in-place, replacing profanity with asterisks.
 
-    Handles the WolvenKit CR2W export format:
-      { "$type": "...", "entries": [ { "femaleVariant": "...", "maleVariant": "...", ... } ] }
+    Handles the WolvenKit CR2W export format produced by 'cr2w -s':
+      { "Header": {...}, "Data": { "RootChunk": { "root": { "Data": { "entries": [...] } } } } }
 
     Only modifies "femaleVariant" and "maleVariant" string fields.
     Returns a list of patch records for the audit log.
@@ -64,13 +64,7 @@ def patch_json_file(
     records: list[PatchRecord] = []
     modified = False
 
-    # CR2W export: root object with an "entries" list
-    if isinstance(data, dict) and "entries" in data:
-        entries = data["entries"]
-    elif isinstance(data, list):
-        entries = data
-    else:
-        entries = [data]
+    entries = _extract_entries(data)
 
     for entry in entries:
         if not isinstance(entry, dict):

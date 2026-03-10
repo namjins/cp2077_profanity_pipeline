@@ -96,13 +96,42 @@ def build_pattern(words: list[str]) -> regex.Pattern:
     return regex.compile(pattern_str, regex.IGNORECASE)
 
 
+def _extract_entries(data: object) -> list:
+    """Extract locale entries from a WolvenKit cr2w -s JSON export.
+
+    WolvenKit wraps CR2W content in:
+      { "Header": {...}, "Data": { "RootChunk": { "root": { "Data": { "entries": [...] } } } } }
+
+    Falls back to a direct "entries" key or plain list for simpler structures.
+    """
+    if isinstance(data, dict):
+        # WolvenKit cr2w -s wrapper path
+        try:
+            entries = data["Data"]["RootChunk"]["root"]["Data"]["entries"]
+            if isinstance(entries, list):
+                return entries
+        except (KeyError, TypeError):
+            pass
+
+        # Fallback: flat dict with entries key
+        if "entries" in data:
+            entries = data["entries"]
+            if isinstance(entries, list):
+                return entries
+
+    if isinstance(data, list):
+        return data
+
+    return []
+
+
 def scan_json_file(
     filepath: Path, pattern: regex.Pattern
 ) -> list[ScanHit]:
     """Scan a single locale JSON file for profanity matches.
 
-    Handles the WolvenKit CR2W export format:
-      { "$type": "...", "entries": [ { "femaleVariant": "...", "maleVariant": "...", ... } ] }
+    Handles the WolvenKit CR2W export format produced by 'cr2w -s':
+      { "Header": {...}, "Data": { "RootChunk": { "root": { "Data": { "entries": [...] } } } } }
 
     Only inspects "femaleVariant" and "maleVariant" string fields.
     Input is normalized before matching to catch elongated words (e.g. "fuuuuuck").
@@ -111,14 +140,7 @@ def scan_json_file(
         data = json.load(f)
 
     hits = []
-
-    # CR2W export: root object with an "entries" list
-    if isinstance(data, dict) and "entries" in data:
-        entries = data["entries"]
-    elif isinstance(data, list):
-        entries = data
-    else:
-        entries = [data]
+    entries = _extract_entries(data)
 
     for entry in entries:
         if not isinstance(entry, dict):
