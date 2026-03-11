@@ -16,5 +16,8 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["cp2077_profanity*"]
 
+[tool.setuptools.package-data]
+cp2077_profanity = ["data/*.json"]
+
 [project.scripts]
 cp2077-profanity = "cp2077_profanity.main:main"

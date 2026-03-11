@@ -11,6 +11,7 @@ from .config import load_config, validate_tool_paths
 from .extractor import collect_locale_jsons, extract_archives
 from .patcher import load_patch_log, patch_all
 from .packager import package_mod, write_summary
+from .radio import run_radio_pipeline
 from .repacker import repack_archives
 from .scanner import scan_all
 
@@ -50,7 +51,10 @@ def run(
         False, "--skip-repack", help="Skip repacking and packaging (patch files only)"
     ),
     skip_audio: bool = typer.Option(
-        False, "--skip-audio", help="Skip the audio pipeline (text-only mod)"
+        False, "--skip-audio", help="Skip the voice audio pipeline"
+    ),
+    skip_radio: bool = typer.Option(
+        False, "--skip-radio", help="Skip the radio music pipeline"
     ),
     skip_text_repack: bool = typer.Option(
         False, "--skip-text-repack", help="Skip text archive repacking (use previously built text archive)"
@@ -77,7 +81,7 @@ def run(
     log_path = config.output_dir / "patch_log.csv"
 
     # Validate tool paths only when steps that need them will run
-    needs_wolvenkit = not (skip_text_repack and skip_audio)
+    needs_wolvenkit = not (skip_text_repack and skip_audio and skip_radio)
     if needs_wolvenkit:
         try:
             validate_tool_paths(config)
@@ -85,8 +89,8 @@ def run(
             rprint(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
-    # Wordlist is only needed when scanning/patching or running audio
-    needs_wordlist = not skip_text_repack or not skip_audio
+    # Wordlist is only needed when scanning/patching or running audio/radio
+    needs_wordlist = not skip_text_repack or not skip_audio or not skip_radio
     if needs_wordlist and not config.wordlist_path.exists():
         rprint(f"[red]Error: Wordlist not found: {config.wordlist_path}[/red]")
         raise typer.Exit(1)
@@ -109,7 +113,7 @@ def run(
                 rprint("[red]Error: extracted directory not found. Run without --skip-extract first.[/red]")
                 raise typer.Exit(1)
         else:
-            rprint("[bold]Step 1/6: Extracting archives...[/bold]")
+            rprint("[bold]Step 1/7: Extracting archives...[/bold]")
             extract_dir = extract_archives(config)
 
         # Collect locale JSONs
@@ -121,7 +125,7 @@ def run(
             raise typer.Exit(1)
 
         # Step 2: Scan
-        rprint("[bold]Step 2/6: Scanning for profanity...[/bold]")
+        rprint("[bold]Step 2/7: Scanning for profanity...[/bold]")
         hits = scan_all(json_files, config.wordlist_path)
         rprint(f"  Found {len(hits)} profanity match(es)")
 
@@ -139,7 +143,7 @@ def run(
             raise typer.Exit(0)
 
         # Step 3: Patch
-        rprint("[bold]Step 3/6: Patching files...[/bold]")
+        rprint("[bold]Step 3/7: Patching files...[/bold]")
         records = patch_all(json_files, config.wordlist_path, log_path)
         rprint(f"  Patched {len(records)} string(s), log written to {log_path}")
 
@@ -155,15 +159,15 @@ def run(
             rprint("[red]Error: no .archive found in work dir. Run without --skip-text-repack first.[/red]")
             raise typer.Exit(1)
     else:
-        rprint("[bold]Step 4/6: Repacking text archive...[/bold]")
+        rprint("[bold]Step 4/7: Repacking text archive...[/bold]")
         packed_dir = repack_archives(config, records)
 
-    # Step 5: Audio pipeline
+    # Step 5: Voice audio pipeline
     voice_packed_dir = None
     if skip_audio:
-        rprint("[yellow]Skipping audio pipeline.[/yellow]")
+        rprint("[yellow]Skipping voice audio pipeline.[/yellow]")
     else:
-        rprint("[bold]Step 5/6: Processing audio...[/bold]")
+        rprint("[bold]Step 5/7: Processing voice audio...[/bold]")
         try:
             voice_packed_dir = run_audio_pipeline(config, records)
             if voice_packed_dir:
@@ -171,11 +175,26 @@ def run(
             else:
                 rprint("  No matching voice lines found — audio step skipped.")
         except Exception as e:
-            rprint(f"[yellow]  Audio pipeline error (continuing without audio): {e}[/yellow]")
+            rprint(f"[yellow]  Voice audio pipeline error (continuing without audio): {e}[/yellow]")
 
-    # Step 6: Package
-    rprint("[bold]Step 6/6: Packaging mod...[/bold]")
-    zip_path = package_mod(config, packed_dir, voice_packed_dir, records)
+    # Step 6: Radio music pipeline
+    radio_packed_dir = None
+    if skip_radio:
+        rprint("[yellow]Skipping radio music pipeline.[/yellow]")
+    else:
+        rprint("[bold]Step 6/7: Processing radio music...[/bold]")
+        try:
+            radio_packed_dir = run_radio_pipeline(config)
+            if radio_packed_dir:
+                rprint(f"  Radio archive(s) repacked to: {radio_packed_dir}")
+            else:
+                rprint("  Radio pipeline produced no output (no tracks configured or no matches).")
+        except Exception as e:
+            rprint(f"[yellow]  Radio pipeline error (continuing without radio): {e}[/yellow]")
+
+    # Step 7: Package
+    rprint("[bold]Step 7/7: Packaging mod...[/bold]")
+    zip_path = package_mod(config, packed_dir, voice_packed_dir, radio_packed_dir, records)
     rprint(f"[green bold]Done! Mod package: {zip_path}[/green bold]")
 
 

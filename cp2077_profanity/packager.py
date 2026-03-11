@@ -7,7 +7,12 @@ from pathlib import Path
 from .config import Config
 
 
-def create_zip(config: Config, packed_dir: Path, voice_packed_dir: Path | None = None) -> Path:
+def create_zip(
+    config: Config,
+    packed_dir: Path,
+    voice_packed_dir: Path | None = None,
+    radio_packed_dir: Path | None = None,
+) -> Path:
     """Create a distributable zip containing the repacked .archive file(s).
 
     The zip layout mirrors the game's archive directory so users can extract
@@ -15,6 +20,7 @@ def create_zip(config: Config, packed_dir: Path, voice_packed_dir: Path | None =
 
         archive/pc/mod/<mod_name>.archive         (text)
         archive/pc/mod/<mod_name>_voice.archive   (audio, if present)
+        archive/pc/mod/<mod_name>_radio.archive   (radio, if present)
 
     Install by extracting to the Cyberpunk 2077 game directory.
     """
@@ -39,6 +45,15 @@ def create_zip(config: Config, packed_dir: Path, voice_packed_dir: Path | None =
                 zf.write(archive, arcname)
             if voice_archives:
                 print(f"  Included {len(voice_archives)} voice archive(s) in package")
+
+        if radio_packed_dir:
+            radio_archives = list(radio_packed_dir.glob("*.archive"))
+            for i, archive in enumerate(radio_archives):
+                suffix = f"_{i}" if i > 0 else ""
+                arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}_radio{suffix}.archive"
+                zf.write(archive, arcname)
+            if radio_archives:
+                print(f"  Included {len(radio_archives)} radio archive(s) in package")
 
     print(f"  Package created: {zip_path}")
     return zip_path
@@ -78,10 +93,11 @@ def package_mod(
     config: Config,
     packed_dir: Path,
     voice_packed_dir: Path | None,
+    radio_packed_dir: Path | None,
     patch_records: list,
 ) -> Path:
     """Full packaging step: zip the repacked .archive(s) and write summary."""
-    zip_path = create_zip(config, packed_dir, voice_packed_dir)
+    zip_path = create_zip(config, packed_dir, voice_packed_dir, radio_packed_dir)
 
     # Compute summary stats from patch records
     files_modified = len({r.filepath for r in patch_records})

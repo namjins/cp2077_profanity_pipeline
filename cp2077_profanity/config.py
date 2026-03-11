@@ -23,6 +23,8 @@ class Config:
     wwise_dir: Path = Path("C:/Audiokinetic/Wwise2019.2.15.7667")
     whisper_model: str = "base"
     monkeyplug_workers: int = 6
+    # Radio pipeline settings
+    radio_tracks_file: Path | None = None  # None = use bundled data/radio_tracks.json
 
 
 def load_config(config_path: Path | None = None, **overrides: str) -> Config:
@@ -73,6 +75,10 @@ def load_config(config_path: Path | None = None, **overrides: str) -> Config:
             cfg.whisper_model = audio["whisper_model"]
         if "monkeyplug_workers" in audio:
             cfg.monkeyplug_workers = int(audio["monkeyplug_workers"])
+
+        radio = data.get("radio", {})
+        if "radio_tracks_file" in radio:
+            cfg.radio_tracks_file = Path(radio["radio_tracks_file"])
 
     # Apply CLI overrides
     if "wolvenkit_path" in overrides and overrides["wolvenkit_path"]:
