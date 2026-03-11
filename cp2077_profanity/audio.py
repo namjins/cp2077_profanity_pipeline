@@ -229,6 +229,31 @@ def extract_target_wem_files(
     return wem_dir
 
 
+def _check_monkeyplug() -> None:
+    """Verify monkeyplug is importable in WSL; raise with fix instructions if not."""
+    result = subprocess.run(
+        ["wsl", "bash", "-lc", "monkeyplug --help"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        # Extract the ModuleNotFoundError module name if present
+        missing = None
+        for line in stderr.splitlines():
+            if "ModuleNotFoundError: No module named" in line:
+                missing = line.split("'")[1]
+                break
+        if missing:
+            raise RuntimeError(
+                f"monkeyplug is missing a dependency in WSL: '{missing}'\n"
+                f"Fix with: wsl bash -lc \"pipx inject monkeyplug {missing}\""
+            )
+        raise RuntimeError(
+            f"monkeyplug failed to start in WSL:\n{stderr}\n\n"
+            "Make sure monkeyplug is installed in WSL: pipx install monkeyplug"
+        )
+
+
 def process_audio_with_monkeyplug(
     config: Config,
     wem_dir: Path,
@@ -241,6 +266,8 @@ def process_audio_with_monkeyplug(
     monkeyplug is invoked via WSL so it can use CUDA on the Windows machine.
     Returns list of processed .Ogg output paths.
     """
+    _check_monkeyplug()
+
     processed_dir = wem_dir.parent / "processed_ogg"
     processed_dir.mkdir(parents=True, exist_ok=True)
 
