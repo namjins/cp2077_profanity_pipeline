@@ -102,6 +102,33 @@ def patch_json_file(
     return records
 
 
+def load_patch_log(log_path: Path) -> list[PatchRecord]:
+    """Load patch records from an existing CSV audit log.
+
+    Used to resume a pipeline run without re-scanning already-patched files.
+    words_replaced is left empty since it is not needed for the audio pipeline.
+    """
+    if not log_path.exists():
+        raise FileNotFoundError(f"Patch log not found: {log_path}")
+
+    records: list[PatchRecord] = []
+    with open(log_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            records.append(
+                PatchRecord(
+                    filepath=row["filepath"],
+                    string_key=row["string_key"],
+                    string_id=row["string_id"] or None,
+                    field=row["field"],
+                    original=row["original"],
+                    replacement=row["replacement"],
+                    words_replaced=[],
+                )
+            )
+    return records
+
+
 def write_patch_log(records: list[PatchRecord], output_path: Path) -> None:
     """Write patch records to a CSV audit log."""
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,7 @@ from rich import print as rprint
 from .audio import run_audio_pipeline
 from .config import load_config
 from .extractor import collect_locale_jsons, extract_archives
-from .patcher import patch_all
+from .patcher import load_patch_log, patch_all
 from .packager import package_mod, write_summary
 from .repacker import repack_archives
 from .scanner import scan_all
@@ -70,48 +70,59 @@ def run(
     }
     config = load_config(config_file, **overrides)
 
-    # Step 1: Extract
-    if skip_extract:
-        rprint("[yellow]Skipping extraction (using existing files)[/yellow]")
-        extract_dir = config.work_dir / "extracted"
-        if not extract_dir.exists():
-            rprint("[red]Error: extracted directory not found. Run without --skip-extract first.[/red]")
-            raise typer.Exit(1)
-    else:
-        rprint("[bold]Step 1/6: Extracting archives...[/bold]")
-        extract_dir = extract_archives(config)
-
-    # Collect locale JSONs
-    json_files = collect_locale_jsons(extract_dir)
-    rprint(f"  Found {len(json_files)} English locale file(s)")
-
-    if not json_files:
-        rprint("[red]No English locale files found. Check your game directory path.[/red]")
-        raise typer.Exit(1)
-
-    # Step 2: Scan
-    rprint("[bold]Step 2/6: Scanning for profanity...[/bold]")
-    hits = scan_all(json_files, config.wordlist_path)
-    rprint(f"  Found {len(hits)} profanity match(es)")
-
-    if not hits:
-        rprint("[green]No profanity found! Nothing to do.[/green]")
-        raise typer.Exit(0)
-
-    if scan_only:
-        rprint("[yellow]Scan-only mode: skipping patch, repack, and package steps.[/yellow]")
-        # Still write a summary
-        unique_words = {h.matched_word.lower() for h in hits}
-        files_with_hits = len({str(h.filepath) for h in hits})
-        write_summary(config, files_with_hits, len(hits), unique_words)
-        rprint(f"  Summary written to {config.output_dir / 'summary.txt'}")
-        raise typer.Exit(0)
-
-    # Step 3: Patch
-    rprint("[bold]Step 3/6: Patching files...[/bold]")
     log_path = config.output_dir / "patch_log.csv"
-    records = patch_all(json_files, config.wordlist_path, log_path)
-    rprint(f"  Patched {len(records)} string(s), log written to {log_path}")
+
+    if skip_text_repack:
+        # Files are already patched from a previous run — load records from the existing log
+        rprint("[yellow]Loading patch records from existing patch log (skip-text-repack mode).[/yellow]")
+        try:
+            records = load_patch_log(log_path)
+        except FileNotFoundError:
+            rprint(f"[red]Error: patch log not found at {log_path}. Run without --skip-text-repack first.[/red]")
+            raise typer.Exit(1)
+        rprint(f"  Loaded {len(records)} patch record(s) from log")
+    else:
+        # Step 1: Extract
+        if skip_extract:
+            rprint("[yellow]Skipping extraction (using existing files)[/yellow]")
+            extract_dir = config.work_dir / "extracted"
+            if not extract_dir.exists():
+                rprint("[red]Error: extracted directory not found. Run without --skip-extract first.[/red]")
+                raise typer.Exit(1)
+        else:
+            rprint("[bold]Step 1/6: Extracting archives...[/bold]")
+            extract_dir = extract_archives(config)
+
+        # Collect locale JSONs
+        json_files = collect_locale_jsons(extract_dir)
+        rprint(f"  Found {len(json_files)} English locale file(s)")
+
+        if not json_files:
+            rprint("[red]No English locale files found. Check your game directory path.[/red]")
+            raise typer.Exit(1)
+
+        # Step 2: Scan
+        rprint("[bold]Step 2/6: Scanning for profanity...[/bold]")
+        hits = scan_all(json_files, config.wordlist_path)
+        rprint(f"  Found {len(hits)} profanity match(es)")
+
+        if not hits:
+            rprint("[green]No profanity found! Nothing to do.[/green]")
+            raise typer.Exit(0)
+
+        if scan_only:
+            rprint("[yellow]Scan-only mode: skipping patch, repack, and package steps.[/yellow]")
+            # Still write a summary
+            unique_words = {h.matched_word.lower() for h in hits}
+            files_with_hits = len({str(h.filepath) for h in hits})
+            write_summary(config, files_with_hits, len(hits), unique_words)
+            rprint(f"  Summary written to {config.output_dir / 'summary.txt'}")
+            raise typer.Exit(0)
+
+        # Step 3: Patch
+        rprint("[bold]Step 3/6: Patching files...[/bold]")
+        records = patch_all(json_files, config.wordlist_path, log_path)
+        rprint(f"  Patched {len(records)} string(s), log written to {log_path}")
 
     if skip_repack:
         rprint("[yellow]Skipping repack and package steps.[/yellow]")
