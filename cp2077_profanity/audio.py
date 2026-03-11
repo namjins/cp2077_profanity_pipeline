@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -62,16 +63,22 @@ def extract_voiceover_maps(config: Config, voice_extract_dir: Path) -> Path:
                 "-o", str(maps_dir),
                 "--pattern", f"*{map_name}",
             ]
-            subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  Warning: unbundle failed for {map_name} in {archive.name}")
+                if result.stderr:
+                    print(f"  stderr: {result.stderr.strip()[:200]}")
 
     # Deserialize CR2W .json files to .json.json in parallel
     cr2w_files = [p for p in maps_dir.rglob("*.json") if not p.name.endswith(".json.json")]
     if cr2w_files:
         def _convert_map(f: Path) -> None:
-            subprocess.run(
+            result = subprocess.run(
                 [str(config.wolvenkit_cli), "cr2w", "-s", str(f)],
                 capture_output=True, text=True,
             )
+            if result.returncode != 0:
+                print(f"  Warning: cr2w conversion failed for {f.name}")
 
         with Progress(
             TextColumn("  [bold]{task.description}"),
@@ -209,7 +216,9 @@ def extract_target_wem_files(
             "-o", str(wem_dir),
             "--regex", regex_pattern,
         ]
-        subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 and result.stderr:
+            print(f"  Warning: uncook failed for batch in {archive.name}: {result.stderr.strip()[:200]}")
 
     with Progress(
         TextColumn("  [bold]{task.description}"),
@@ -230,16 +239,29 @@ def extract_target_wem_files(
 
 
 def _check_monkeyplug() -> None:
-    """Verify monkeyplug is importable in WSL; raise with fix instructions if not."""
-    result = subprocess.run(
-        ["wsl", "bash", "-lc", "monkeyplug --help"],
+    """Verify monkeyplug is installed and importable in WSL; raise with fix instructions if not."""
+    # Check that the command exists
+    which_result = subprocess.run(
+        ["wsl", "bash", "-lc", "command -v monkeyplug"],
         capture_output=True, text=True,
     )
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        # Extract the ModuleNotFoundError module name if present
+    if which_result.returncode != 0:
+        raise RuntimeError(
+            "monkeyplug is not installed in WSL.\n"
+            "Install with: wsl bash -lc \"pipx install monkeyplug\""
+        )
+
+    # Trigger its import chain by invoking with no args.
+    # If it complains about missing arguments, the import succeeded.
+    # If there's a Traceback/ModuleNotFoundError, a dependency is missing.
+    result = subprocess.run(
+        ["wsl", "bash", "-lc", "monkeyplug 2>&1"],
+        capture_output=True, text=True,
+    )
+    combined = (result.stdout + result.stderr).strip()
+    if "Traceback" in combined or "ModuleNotFoundError" in combined:
         missing = None
-        for line in stderr.splitlines():
+        for line in combined.splitlines():
             if "ModuleNotFoundError: No module named" in line:
                 missing = line.split("'")[1]
                 break
@@ -249,8 +271,8 @@ def _check_monkeyplug() -> None:
                 f"Fix with: wsl bash -lc \"pipx inject monkeyplug {missing}\""
             )
         raise RuntimeError(
-            f"monkeyplug failed to start in WSL:\n{stderr}\n\n"
-            "Make sure monkeyplug is installed in WSL: pipx install monkeyplug"
+            f"monkeyplug import failed in WSL:\n{combined}\n\n"
+            "Try reinstalling: wsl bash -lc \"pipx reinstall monkeyplug\""
         )
 
 
@@ -277,16 +299,18 @@ def process_audio_with_monkeyplug(
         out_file = processed_dir / ogg.name
 
         # Skip if already processed (allows resuming interrupted runs)
-        if out_file.exists():
+        # Check size > 0 to avoid skipping files from a crashed previous run
+        if out_file.exists() and out_file.stat().st_size > 0:
             return out_file
 
-        wsl_input = _to_wsl_path(ogg)
-        wsl_output = _to_wsl_path(out_file)
+        wsl_input = shlex.quote(_to_wsl_path(ogg))
+        wsl_output = shlex.quote(_to_wsl_path(out_file))
+        quoted_wordlist = shlex.quote(wsl_wordlist)
         monkeyplug_args = (
             f"monkeyplug"
             f" -i {wsl_input}"
             f" -o {wsl_output}"
-            f" -w {wsl_wordlist}"
+            f" -w {quoted_wordlist}"
             f" -m whisper"
             f" --whisper-model-name {config.whisper_model}"
             f" -b false"
@@ -423,8 +447,13 @@ def run_audio_pipeline(config: Config, patch_records: list) -> Path | None:
     voice_dir.mkdir(parents=True, exist_ok=True)
 
     # Step A: extract voiceover maps and build stringId lookup
-    print("  Extracting voiceover maps...")
-    maps_dir = extract_voiceover_maps(config, voice_dir)
+    maps_dir = voice_dir / "voiceover_maps"
+    existing_maps = list(maps_dir.rglob("*.json.json")) if maps_dir.exists() else []
+    if existing_maps:
+        print(f"  Reusing {len(existing_maps)} existing voiceover map(s)")
+    else:
+        print("  Extracting voiceover maps...")
+        maps_dir = extract_voiceover_maps(config, voice_dir)
     voiceover_map = build_string_id_to_wem_map(maps_dir)
 
     if not voiceover_map:

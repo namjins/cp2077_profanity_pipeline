@@ -29,6 +29,9 @@ def load_config(config_path: Path | None = None, **overrides: str) -> Config:
     """Load configuration from a TOML file, with CLI overrides applied on top."""
     cfg = Config()
 
+    if config_path and not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
     if config_path and config_path.exists():
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
@@ -84,3 +87,24 @@ def load_config(config_path: Path | None = None, **overrides: str) -> Config:
         cfg.wordlist_path = Path(overrides["wordlist"])
 
     return cfg
+
+
+def validate_tool_paths(cfg: Config) -> None:
+    """Validate that WolvenKit CLI and game directory exist.
+
+    Call this only when steps that need these tools will actually run.
+    Checks PATH for the CLI executable if the path is not absolute.
+    """
+    import shutil
+
+    wk = cfg.wolvenkit_cli
+    if not wk.exists() and not shutil.which(str(wk)):
+        raise FileNotFoundError(
+            f"WolvenKit CLI not found: {wk}\n"
+            "Set 'cli_path' in config.toml [wolvenkit] or pass --wolvenkit-path"
+        )
+    if not cfg.game_dir.exists():
+        raise FileNotFoundError(
+            f"Game directory not found: {cfg.game_dir}\n"
+            "Set 'game_dir' in config.toml [paths] or pass --game-dir"
+        )

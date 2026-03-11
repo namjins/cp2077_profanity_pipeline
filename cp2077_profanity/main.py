@@ -7,7 +7,7 @@ import typer
 from rich import print as rprint
 
 from .audio import run_audio_pipeline
-from .config import load_config
+from .config import load_config, validate_tool_paths
 from .extractor import collect_locale_jsons, extract_archives
 from .patcher import load_patch_log, patch_all
 from .packager import package_mod, write_summary
@@ -68,9 +68,28 @@ def run(
         }.items()
         if v is not None
     }
-    config = load_config(config_file, **overrides)
+    try:
+        config = load_config(config_file, **overrides)
+    except FileNotFoundError as e:
+        rprint(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
 
     log_path = config.output_dir / "patch_log.csv"
+
+    # Validate tool paths only when steps that need them will run
+    needs_wolvenkit = not (skip_text_repack and skip_audio)
+    if needs_wolvenkit:
+        try:
+            validate_tool_paths(config)
+        except FileNotFoundError as e:
+            rprint(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
+
+    # Wordlist is only needed when scanning/patching or running audio
+    needs_wordlist = not skip_text_repack or not skip_audio
+    if needs_wordlist and not config.wordlist_path.exists():
+        rprint(f"[red]Error: Wordlist not found: {config.wordlist_path}[/red]")
+        raise typer.Exit(1)
 
     if skip_text_repack:
         # Files are already patched from a previous run — load records from the existing log

@@ -1,5 +1,6 @@
 """Assemble the final mod package and create a distributable zip."""
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -87,7 +88,14 @@ def package_mod(
     strings_changed = len(patch_records)
     unique_words: set[str] = set()
     for r in patch_records:
-        unique_words.update(w.lower() for w in r.words_replaced)
+        if r.words_replaced:
+            unique_words.update(w.lower() for w in r.words_replaced)
+        else:
+            # Loaded from CSV without words_replaced — extract originals from asterisk spans
+            for m in re.finditer(r"\*+", r.replacement):
+                original_word = r.original[m.start():m.end()]
+                if original_word and not original_word.startswith("*"):
+                    unique_words.add(original_word.lower())
 
     write_summary(config, files_modified, strings_changed, unique_words)
 
