@@ -13,5 +13,8 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["cp2077_profanity*"]
+
 [project.scripts]
 cp2077-profanity = "cp2077_profanity.main:main"
