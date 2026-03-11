@@ -52,6 +52,9 @@ def run(
     skip_audio: bool = typer.Option(
         False, "--skip-audio", help="Skip the audio pipeline (text-only mod)"
     ),
+    skip_text_repack: bool = typer.Option(
+        False, "--skip-text-repack", help="Skip text archive repacking (use previously built text archive)"
+    ),
 ) -> None:
     """Run the full profanity filter pipeline: extract → scan → patch → repack → package."""
     overrides = {
@@ -115,8 +118,15 @@ def run(
         raise typer.Exit(0)
 
     # Step 4: Repack text archive
-    rprint("[bold]Step 4/6: Repacking text archive...[/bold]")
-    packed_dir = repack_archives(config, records)
+    if skip_text_repack:
+        rprint("[yellow]Skipping text repack (using existing archive).[/yellow]")
+        packed_dir = config.work_dir
+        if not list(packed_dir.glob("*.archive")):
+            rprint("[red]Error: no .archive found in work dir. Run without --skip-text-repack first.[/red]")
+            raise typer.Exit(1)
+    else:
+        rprint("[bold]Step 4/6: Repacking text archive...[/bold]")
+        packed_dir = repack_archives(config, records)
 
     # Step 5: Audio pipeline
     voice_packed_dir = None

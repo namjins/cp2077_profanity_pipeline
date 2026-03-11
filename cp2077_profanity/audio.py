@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -107,7 +108,15 @@ def build_string_id_to_wem_map(maps_dir: Path) -> dict[str, dict[str, str]]:
                 pass
 
             if female_path or male_path:
-                lookup[string_id] = {"female": female_path, "male": male_path}
+                existing = lookup.get(string_id)
+                if existing:
+                    # Merge: keep non-empty paths from both sources
+                    if female_path and not existing["female"]:
+                        existing["female"] = female_path
+                    if male_path and not existing["male"]:
+                        existing["male"] = male_path
+                else:
+                    lookup[string_id] = {"female": female_path, "male": male_path}
 
     print(f"  Built voiceover map: {len(lookup)} entries")
     return lookup
@@ -179,7 +188,7 @@ def extract_target_wem_files(
         task = progress.add_task("Extracting voice files", total=len(batches))
         for batch in batches:
             # Build regex: match any filename in this batch
-            regex_pattern = "(" + "|".join(batch) + r")\.wem$"
+            regex_pattern = "(" + "|".join(re.escape(s) for s in batch) + r")\.wem$"
             for archive in archives:
                 cmd = [
                     str(config.wolvenkit_cli),
@@ -336,7 +345,7 @@ def pack_voice_archive(config: Config, wem_dir: Path, processed_wem_files: list[
     # WolvenKit pack takes the top-level directory that contains the depot structure.
     # uncook creates: wem_dir/base/localization/... so we pack wem_dir directly.
     print(f"  Repacking voice archive from: {wem_dir}")
-    cmd = [str(config.wolvenkit_cli), "pack", str(wem_dir)]
+    cmd = [str(config.wolvenkit_cli), "pack", "-p", str(wem_dir)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"WolvenKit pack failed: {result.stderr.strip()}")

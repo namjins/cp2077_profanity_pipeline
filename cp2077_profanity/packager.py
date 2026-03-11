@@ -25,14 +25,16 @@ def create_zip(config: Config, packed_dir: Path, voice_packed_dir: Path | None =
         raise FileNotFoundError(f"No .archive files found in {packed_dir}")
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for archive in archives:
-            arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}.archive"
+        for i, archive in enumerate(archives):
+            suffix = f"_{i}" if i > 0 else ""
+            arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}{suffix}.archive"
             zf.write(archive, arcname)
 
         if voice_packed_dir:
             voice_archives = list(voice_packed_dir.glob("*.archive"))
-            for archive in voice_archives:
-                arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}_voice.archive"
+            for i, archive in enumerate(voice_archives):
+                suffix = f"_{i}" if i > 0 else ""
+                arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}_voice{suffix}.archive"
                 zf.write(archive, arcname)
             if voice_archives:
                 print(f"  Included {len(voice_archives)} voice archive(s) in package")

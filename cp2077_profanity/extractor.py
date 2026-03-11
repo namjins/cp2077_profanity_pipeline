@@ -27,8 +27,11 @@ def find_locale_archives(game_dir: Path) -> list[Path]:
 
         found = list(archive_dir.glob("lang_en_text.archive"))
         if not found:
-            # Fallback: any archive with 'lang_en' in the name
-            found = list(archive_dir.glob("*lang_en*.archive"))
+            # Fallback: any text archive with 'lang_en' in the name (exclude voice)
+            found = [
+                p for p in archive_dir.glob("*lang_en*.archive")
+                if "voice" not in p.name.lower()
+            ]
 
         if found:
             print(f"  Found {len(found)} locale archive(s) in {label}: {archive_dir}")
