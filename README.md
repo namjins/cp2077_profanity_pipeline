@@ -127,6 +127,7 @@ workers = 8   # parallel CR2W conversion workers — increase if you have more C
 sound2wem_script = "C:\\Tools\\sound2wem\\zSound2wem.cmd"
 wwise_dir = "C:\\Audiokinetic\\Wwise2019.2.15.7667"
 whisper_model = "base"   # tiny/base/small/medium/large — larger = more accurate but slower
+monkeyplug_workers = 6   # parallel instances — reduce if you get GPU OOM errors
 ```
 
 ---

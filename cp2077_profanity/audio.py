@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
@@ -195,45 +196,62 @@ def process_audio_with_monkeyplug(
 ) -> list[Path]:
     """Run monkeyplug on each .Ogg file to mute profane segments.
 
-    Returns list of processed .Ogg output paths.
+    Runs up to config.monkeyplug_workers instances in parallel (default 6).
+    Skips files that were already processed in a previous run.
     monkeyplug is invoked via WSL so it can use CUDA on the Windows machine.
+    Returns list of processed .Ogg output paths.
     """
     processed_dir = wem_dir.parent / "processed_ogg"
     processed_dir.mkdir(parents=True, exist_ok=True)
-    processed: list[Path] = []
 
+    wsl_wordlist = _to_wsl_path(config.wordlist_path)
+
+    def _process_one(ogg: Path) -> Path | None:
+        out_file = processed_dir / ogg.name
+
+        # Skip if already processed (allows resuming interrupted runs)
+        if out_file.exists():
+            return out_file
+
+        wsl_input = _to_wsl_path(ogg)
+        wsl_output = _to_wsl_path(out_file)
+        cmd = [
+            "wsl",
+            "monkeyplug",
+            "-i", wsl_input,
+            "-o", wsl_output,
+            "-w", wsl_wordlist,
+            "-m", "whisper",
+            "--whisper-model-name", config.whisper_model,
+            "-b", "false",  # silence mode (no beep)
+            "--force", "true",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  Warning: monkeyplug failed for {ogg.name}")
+            if result.stderr:
+                print(f"  stderr: {result.stderr.strip()[:200]}")
+            return None
+        return out_file if out_file.exists() else None
+
+    processed: list[Path] = []
     with Progress(
         TextColumn("  [bold]{task.description}"),
         BarColumn(),
         MofNCompleteColumn(),
         TimeRemainingColumn(),
     ) as progress:
-        task = progress.add_task("Processing audio (monkeyplug)", total=len(ogg_files))
-        for ogg in ogg_files:
-            out_file = processed_dir / ogg.name
-            # Convert Windows path to WSL path for monkeyplug
-            wsl_input = _to_wsl_path(ogg)
-            wsl_output = _to_wsl_path(out_file)
-            wsl_wordlist = _to_wsl_path(config.wordlist_path)
-            cmd = [
-                "wsl",
-                "monkeyplug",
-                "-i", wsl_input,
-                "-o", wsl_output,
-                "-w", wsl_wordlist,
-                "-m", "whisper",
-                "--whisper-model-name", config.whisper_model,
-                "-b", "false",  # silence mode (no beep)
-                "--force", "true",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"  Warning: monkeyplug failed for {ogg.name}")
-                if result.stderr:
-                    print(f"  stderr: {result.stderr.strip()[:200]}")
-            elif out_file.exists():
-                processed.append(out_file)
-            progress.advance(task)
+        task = progress.add_task(
+            f"Processing audio ({config.monkeyplug_workers} workers)",
+            total=len(ogg_files),
+        )
+        with ThreadPoolExecutor(max_workers=config.monkeyplug_workers) as executor:
+            futures = {executor.submit(_process_one, ogg): ogg for ogg in ogg_files}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    processed.append(result)
+                progress.advance(task)
 
     return processed
 

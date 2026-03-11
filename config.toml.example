@@ -32,3 +32,5 @@ sound2wem_script = "C:\\Tools\\sound2wem\\zSound2wem.cmd"
 wwise_dir = "C:\\Audiokinetic\\Wwise2019.2.15.7667"
 # Whisper model size for monkeyplug speech recognition: tiny, base, small, medium, large
 whisper_model = "base"
+# Number of parallel monkeyplug instances (GPU-bound — tune based on available VRAM)
+monkeyplug_workers = 6

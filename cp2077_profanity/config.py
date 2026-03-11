@@ -22,6 +22,7 @@ class Config:
     sound2wem_script: Path = Path("C:/Tools/sound2wem/zSound2wem.cmd")
     wwise_dir: Path = Path("C:/Audiokinetic/Wwise2019.2.15.7667")
     whisper_model: str = "base"
+    monkeyplug_workers: int = 6
 
 
 def load_config(config_path: Path | None = None, **overrides: str) -> Config:
@@ -67,6 +68,8 @@ def load_config(config_path: Path | None = None, **overrides: str) -> Config:
             cfg.wwise_dir = Path(audio["wwise_dir"])
         if "whisper_model" in audio:
             cfg.whisper_model = audio["whisper_model"]
+        if "monkeyplug_workers" in audio:
+            cfg.monkeyplug_workers = int(audio["monkeyplug_workers"])
 
     # Apply CLI overrides
     if "wolvenkit_path" in overrides and overrides["wolvenkit_path"]:
