@@ -6,13 +6,14 @@ from pathlib import Path
 from .config import Config
 
 
-def create_zip(config: Config, packed_dir: Path) -> Path:
+def create_zip(config: Config, packed_dir: Path, voice_packed_dir: Path | None = None) -> Path:
     """Create a distributable zip containing the repacked .archive file(s).
 
     The zip layout mirrors the game's archive directory so users can extract
-    directly into the game folder or into archive/pc/mod/:
+    directly into the game folder:
 
-        archive/pc/mod/<mod_name>.archive
+        archive/pc/mod/<mod_name>.archive         (text)
+        archive/pc/mod/<mod_name>_voice.archive   (audio, if present)
 
     Install by extracting to the Cyberpunk 2077 game directory.
     """
@@ -27,6 +28,14 @@ def create_zip(config: Config, packed_dir: Path) -> Path:
         for archive in archives:
             arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}.archive"
             zf.write(archive, arcname)
+
+        if voice_packed_dir:
+            voice_archives = list(voice_packed_dir.glob("*.archive"))
+            for archive in voice_archives:
+                arcname = Path("archive") / "pc" / "mod" / f"{config.mod_name}_voice.archive"
+                zf.write(archive, arcname)
+            if voice_archives:
+                print(f"  Included {len(voice_archives)} voice archive(s) in package")
 
     print(f"  Package created: {zip_path}")
     return zip_path
@@ -62,9 +71,14 @@ def write_summary(
     return summary_path
 
 
-def package_mod(config: Config, packed_dir: Path, patch_records: list) -> Path:
-    """Full packaging step: zip the repacked .archive and write summary."""
-    zip_path = create_zip(config, packed_dir)
+def package_mod(
+    config: Config,
+    packed_dir: Path,
+    voice_packed_dir: Path | None,
+    patch_records: list,
+) -> Path:
+    """Full packaging step: zip the repacked .archive(s) and write summary."""
+    zip_path = create_zip(config, packed_dir, voice_packed_dir)
 
     # Compute summary stats from patch records
     files_modified = len({r.filepath for r in patch_records})

@@ -18,6 +18,10 @@ class Config:
     mod_description: str = "Replaces profane words in English localization with asterisks"
     wordlist_path: Path = Path("./profanity_list.txt")
     workers: int = 8
+    # Audio pipeline settings
+    sound2wem_script: Path = Path("C:/Tools/sound2wem/zSound2wem.cmd")
+    wwise_dir: Path = Path("C:/Audiokinetic/Wwise2019.2.15.7667")
+    whisper_model: str = "base"
 
 
 def load_config(config_path: Path | None = None, **overrides: str) -> Config:
@@ -55,6 +59,14 @@ def load_config(config_path: Path | None = None, **overrides: str) -> Config:
         perf = data.get("performance", {})
         if "workers" in perf:
             cfg.workers = int(perf["workers"])
+
+        audio = data.get("audio", {})
+        if "sound2wem_script" in audio:
+            cfg.sound2wem_script = Path(audio["sound2wem_script"])
+        if "wwise_dir" in audio:
+            cfg.wwise_dir = Path(audio["wwise_dir"])
+        if "whisper_model" in audio:
+            cfg.whisper_model = audio["whisper_model"]
 
     # Apply CLI overrides
     if "wolvenkit_path" in overrides and overrides["wolvenkit_path"]:

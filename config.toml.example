@@ -24,3 +24,11 @@ wordlist = "./profanity_list.txt"
 # Number of parallel workers for CR2W conversion (cr2w -s and cr2w -d)
 # Increase for faster extraction/repacking on machines with more CPU cores
 workers = 8
+
+[audio]
+# Path to sound2wem batch script (OGG → WEM conversion via Wwise)
+sound2wem_script = "C:\\Tools\\sound2wem\\zSound2wem.cmd"
+# Path to Audiokinetic Wwise installation directory
+wwise_dir = "C:\\Audiokinetic\\Wwise2019.2.15.7667"
+# Whisper model size for monkeyplug speech recognition: tiny, base, small, medium, large
+whisper_model = "base"

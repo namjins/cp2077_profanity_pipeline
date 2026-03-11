@@ -6,6 +6,7 @@ from typing import Optional
 import typer
 from rich import print as rprint
 
+from .audio import run_audio_pipeline
 from .config import load_config
 from .extractor import collect_locale_jsons, extract_archives
 from .patcher import patch_all
@@ -47,6 +48,9 @@ def run(
     ),
     skip_repack: bool = typer.Option(
         False, "--skip-repack", help="Skip repacking and packaging (patch files only)"
+    ),
+    skip_audio: bool = typer.Option(
+        False, "--skip-audio", help="Skip the audio pipeline (text-only mod)"
     ),
 ) -> None:
     """Run the full profanity filter pipeline: extract → scan → patch → repack → package."""
@@ -110,13 +114,28 @@ def run(
         rprint("[yellow]Skipping repack and package steps.[/yellow]")
         raise typer.Exit(0)
 
-    # Step 4: Repack
-    rprint("[bold]Step 4/5: Repacking archives...[/bold]")
+    # Step 4: Repack text archive
+    rprint("[bold]Step 4/6: Repacking text archive...[/bold]")
     packed_dir = repack_archives(config, records)
 
-    # Step 5: Package
-    rprint("[bold]Step 5/5: Packaging mod...[/bold]")
-    zip_path = package_mod(config, packed_dir, records)
+    # Step 5: Audio pipeline
+    voice_packed_dir = None
+    if skip_audio:
+        rprint("[yellow]Skipping audio pipeline.[/yellow]")
+    else:
+        rprint("[bold]Step 5/6: Processing audio...[/bold]")
+        try:
+            voice_packed_dir = run_audio_pipeline(config, records)
+            if voice_packed_dir:
+                rprint(f"  Voice archive(s) repacked to: {voice_packed_dir}")
+            else:
+                rprint("  No matching voice lines found — audio step skipped.")
+        except Exception as e:
+            rprint(f"[yellow]  Audio pipeline error (continuing without audio): {e}[/yellow]")
+
+    # Step 6: Package
+    rprint("[bold]Step 6/6: Packaging mod...[/bold]")
+    zip_path = package_mod(config, packed_dir, voice_packed_dir, records)
     rprint(f"[green bold]Done! Mod package: {zip_path}[/green bold]")
 
 
