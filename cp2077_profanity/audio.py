@@ -64,11 +64,29 @@ def extract_voiceover_maps(config: Config, voice_extract_dir: Path) -> Path:
             ]
             subprocess.run(cmd, capture_output=True, text=True)
 
-    # Deserialize CR2W .json files to .json.json
+    # Deserialize CR2W .json files to .json.json in parallel
     cr2w_files = [p for p in maps_dir.rglob("*.json") if not p.name.endswith(".json.json")]
-    for f in cr2w_files:
-        cmd = [str(config.wolvenkit_cli), "cr2w", "-s", str(f)]
-        subprocess.run(cmd, capture_output=True, text=True)
+    if cr2w_files:
+        def _convert_map(f: Path) -> None:
+            subprocess.run(
+                [str(config.wolvenkit_cli), "cr2w", "-s", str(f)],
+                capture_output=True, text=True,
+            )
+
+        with Progress(
+            TextColumn("  [bold]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            task = progress.add_task(
+                f"Converting voiceover maps ({config.workers} workers)", total=len(cr2w_files)
+            )
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
+                futures = {executor.submit(_convert_map, f): f for f in cr2w_files}
+                for future in as_completed(futures):
+                    future.result()
+                    progress.advance(task)
 
     return maps_dir
 
@@ -179,26 +197,34 @@ def extract_target_wem_files(
     batch_size = 50
     batches = [stems[i : i + batch_size] for i in range(0, len(stems), batch_size)]
 
+    # Flatten into (batch, archive) jobs and run in parallel
+    jobs = [(batch, archive) for batch in batches for archive in archives]
+
+    def _extract_job(batch: list[str], archive: Path) -> None:
+        regex_pattern = "(" + "|".join(re.escape(s) for s in batch) + r")\.wem$"
+        cmd = [
+            str(config.wolvenkit_cli),
+            "uncook",
+            str(archive),
+            "-o", str(wem_dir),
+            "--regex", regex_pattern,
+        ]
+        subprocess.run(cmd, capture_output=True, text=True)
+
     with Progress(
         TextColumn("  [bold]{task.description}"),
         BarColumn(),
         MofNCompleteColumn(),
         TimeRemainingColumn(),
     ) as progress:
-        task = progress.add_task("Extracting voice files", total=len(batches))
-        for batch in batches:
-            # Build regex: match any filename in this batch
-            regex_pattern = "(" + "|".join(re.escape(s) for s in batch) + r")\.wem$"
-            for archive in archives:
-                cmd = [
-                    str(config.wolvenkit_cli),
-                    "uncook",
-                    str(archive),
-                    "-o", str(wem_dir),
-                    "--regex", regex_pattern,
-                ]
-                subprocess.run(cmd, capture_output=True, text=True)
-            progress.advance(task)
+        task = progress.add_task(
+            f"Extracting voice files ({config.workers} workers)", total=len(jobs)
+        )
+        with ThreadPoolExecutor(max_workers=config.workers) as executor:
+            futures = {executor.submit(_extract_job, b, a): (b, a) for b, a in jobs}
+            for future in as_completed(futures):
+                future.result()
+                progress.advance(task)
 
     return wem_dir
 
