@@ -119,8 +119,9 @@ def find_wem_paths_for_records(
 ) -> list[tuple[str, str]]:
     """Return deduplicated list of (string_id, depot_path) tuples for patched records.
 
-    Maps each patch record's string_id to its corresponding .wem depot path(s),
-    selecting female or male path based on which field was patched.
+    Maps each patch record's string_id to its corresponding .wem depot path(s).
+    Collects both female and male paths when the stringId appears in the voiceover
+    map, since the same line often has both gender variants recorded.
     """
     targets: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -131,15 +132,10 @@ def find_wem_paths_for_records(
             continue
 
         paths = voiceover_map[string_id]
-        # Select path based on which text field was patched
-        if record.field == "femaleVariant":
-            depot_path = paths.get("female", "")
-        else:
-            depot_path = paths.get("male", "")
-
-        if depot_path and depot_path not in seen:
-            seen.add(depot_path)
-            targets.append((string_id, depot_path))
+        for depot_path in (paths.get("female", ""), paths.get("male", "")):
+            if depot_path and depot_path not in seen:
+                seen.add(depot_path)
+                targets.append((string_id, depot_path))
 
     return targets
 
@@ -151,7 +147,8 @@ def extract_target_wem_files(
 ) -> Path:
     """Extract specific .wem files (and their .Ogg conversions) from voice archives.
 
-    Uses WolvenKit uncook with --pattern to extract matching files.
+    Uses WolvenKit uncook with --regex to extract matching files in batches.
+    Batches filenames to avoid spinning up WolvenKit once per file.
     Returns the directory containing the extracted files.
     """
     wem_dir = voice_extract_dir / "wem_files"
@@ -161,10 +158,17 @@ def extract_target_wem_files(
     if not archives:
         raise FileNotFoundError("No lang_en_voice.archive found.")
 
-    # Group depot paths by filename stem for pattern matching
+    # Collect all filename stems from depot paths
     # depot path format: base\localization\en-us\vo\filename.wem
-    filenames = {Path(p.replace("\\", "/")).name for p in depot_paths}
-    print(f"  Extracting {len(filenames)} target .wem file(s)...")
+    stems = sorted({Path(p.replace("\\", "/")).stem for p in depot_paths})
+    print(f"  Extracting {len(stems)} target .wem file(s)...")
+
+    # Batch stems into regex groups to reduce WolvenKit invocations.
+    # WolvenKit --regex matches against the full depot path, so we
+    # use a partial match on the filename stem.
+    # Limit batch size to avoid command-line length issues.
+    batch_size = 50
+    batches = [stems[i : i + batch_size] for i in range(0, len(stems), batch_size)]
 
     with Progress(
         TextColumn("  [bold]{task.description}"),
@@ -172,16 +176,17 @@ def extract_target_wem_files(
         MofNCompleteColumn(),
         TimeRemainingColumn(),
     ) as progress:
-        task = progress.add_task("Extracting voice files", total=len(filenames))
-        for filename in filenames:
-            stem = filename.replace(".wem", "")
+        task = progress.add_task("Extracting voice files", total=len(batches))
+        for batch in batches:
+            # Build regex: match any filename in this batch
+            regex_pattern = "(" + "|".join(batch) + r")\.wem$"
             for archive in archives:
                 cmd = [
                     str(config.wolvenkit_cli),
                     "uncook",
-                    "-p", str(archive),
+                    str(archive),
                     "-o", str(wem_dir),
-                    "--pattern", f"*{stem}*",
+                    "--regex", regex_pattern,
                 ]
                 subprocess.run(cmd, capture_output=True, text=True)
             progress.advance(task)
@@ -308,11 +313,9 @@ def pack_voice_archive(config: Config, wem_dir: Path, processed_wem_files: list[
     depot path structure), then runs WolvenKit pack.
     Returns the directory containing the repacked .archive.
     """
-    # The wem_dir tree mirrors: base/localization/en-us/vo/*.wem
-    # We just replace files in-place
+    # Replace .wem files in the extraction tree with processed versions
     replaced = 0
     for wem_file in processed_wem_files:
-        # Find the original extracted .wem with the same name
         originals = list(wem_dir.rglob(wem_file.name))
         for orig in originals:
             if orig.suffix == ".wem":
@@ -321,15 +324,25 @@ def pack_voice_archive(config: Config, wem_dir: Path, processed_wem_files: list[
 
     print(f"  Replaced {replaced} .wem file(s) in extraction tree")
 
-    # Pack — WolvenKit places the .archive next to the input folder
-    pack_root = wem_dir / "base"
-    print(f"  Repacking voice archive from: {pack_root}")
-    cmd = [str(config.wolvenkit_cli), "pack", "-p", str(pack_root)]
+    # Remove .Ogg files so they don't get packed into the archive
+    for ogg in list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg")):
+        ogg.unlink()
+
+    # Also remove non-wem files that uncook may have extracted (lipsync .anims etc)
+    for f in wem_dir.rglob("*"):
+        if f.is_file() and f.suffix not in (".wem",):
+            f.unlink()
+
+    # WolvenKit pack takes the top-level directory that contains the depot structure.
+    # uncook creates: wem_dir/base/localization/... so we pack wem_dir directly.
+    print(f"  Repacking voice archive from: {wem_dir}")
+    cmd = [str(config.wolvenkit_cli), "pack", str(wem_dir)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"WolvenKit pack failed: {result.stderr.strip()}")
 
-    packed_dir = pack_root.parent
+    # WolvenKit places the .archive alongside the input folder
+    packed_dir = wem_dir.parent
     archives = list(packed_dir.glob("*.archive"))
     if not archives:
         raise RuntimeError(f"No .archive produced in {packed_dir}")

@@ -75,7 +75,7 @@ def run(
             rprint("[red]Error: extracted directory not found. Run without --skip-extract first.[/red]")
             raise typer.Exit(1)
     else:
-        rprint("[bold]Step 1/5: Extracting archives...[/bold]")
+        rprint("[bold]Step 1/6: Extracting archives...[/bold]")
         extract_dir = extract_archives(config)
 
     # Collect locale JSONs
@@ -87,7 +87,7 @@ def run(
         raise typer.Exit(1)
 
     # Step 2: Scan
-    rprint("[bold]Step 2/5: Scanning for profanity...[/bold]")
+    rprint("[bold]Step 2/6: Scanning for profanity...[/bold]")
     hits = scan_all(json_files, config.wordlist_path)
     rprint(f"  Found {len(hits)} profanity match(es)")
 
@@ -105,7 +105,7 @@ def run(
         raise typer.Exit(0)
 
     # Step 3: Patch
-    rprint("[bold]Step 3/5: Patching files...[/bold]")
+    rprint("[bold]Step 3/6: Patching files...[/bold]")
     log_path = config.output_dir / "patch_log.csv"
     records = patch_all(json_files, config.wordlist_path, log_path)
     rprint(f"  Patched {len(records)} string(s), log written to {log_path}")
