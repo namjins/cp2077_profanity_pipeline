@@ -255,17 +255,17 @@ def process_audio_with_monkeyplug(
 
         wsl_input = _to_wsl_path(ogg)
         wsl_output = _to_wsl_path(out_file)
-        cmd = [
-            "wsl",
-            "monkeyplug",
-            "-i", wsl_input,
-            "-o", wsl_output,
-            "-w", wsl_wordlist,
-            "-m", "whisper",
-            "--whisper-model-name", config.whisper_model,
-            "-b", "false",  # silence mode (no beep)
-            "--force", "true",
-        ]
+        monkeyplug_args = (
+            f"monkeyplug"
+            f" -i {wsl_input}"
+            f" -o {wsl_output}"
+            f" -w {wsl_wordlist}"
+            f" -m whisper"
+            f" --whisper-model-name {config.whisper_model}"
+            f" -b false"
+            f" --force true"
+        )
+        cmd = ["wsl", "bash", "-lc", monkeyplug_args]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"  Warning: monkeyplug failed for {ogg.name}")
