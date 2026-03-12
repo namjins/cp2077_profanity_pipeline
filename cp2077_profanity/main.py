@@ -21,7 +21,7 @@ from .packager import package_mod, write_summary
 from .radio import run_radio_pipeline
 from .repacker import repack_archives
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cp2077_profanity.main")
 
 
 def _setup_logging(output_dir: Path, level: int = logging.INFO) -> str:
@@ -32,6 +32,15 @@ def _setup_logging(output_dir: Path, level: int = logging.INFO) -> str:
 
     root = logging.getLogger("cp2077_profanity")
     root.setLevel(level)
+    root.propagate = False
+
+    # Prevent duplicate handlers if run() is invoked multiple times in-process.
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
 
     # File handler: detailed log for post-run forensics
     fh = logging.FileHandler(log_path, encoding="utf-8")

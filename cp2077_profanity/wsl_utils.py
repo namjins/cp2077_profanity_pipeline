@@ -190,10 +190,17 @@ def run_monkeyplug_on_file(
     return normalized
 
 
-def convert_ogg_to_wem(config: Config, ogg_files: list[Path], wem_out_dir: Path) -> list[Path]:
+def convert_ogg_to_wem(
+    config: Config,
+    ogg_files: list[Path],
+    wem_out_dir: Path,
+    preserve_tree_root: Path | None = None,
+) -> list[Path]:
     """Convert processed .Ogg files back to .wem using sound2wem (Wwise CLI wrapper).
 
     Runs sound2wem from its own directory so it can find/create its Wwise project.
+    If preserve_tree_root is provided, output .wem files preserve paths relative to
+    that root; otherwise files are written flat by basename (legacy behavior).
     Returns list of produced .wem file paths.
     """
     import os
@@ -228,7 +235,23 @@ def convert_ogg_to_wem(config: Config, ogg_files: list[Path], wem_out_dir: Path)
             # sound2wem outputs .wem in its own directory
             wem_candidate = sound2wem.parent / ogg.with_suffix(".wem").name
             if wem_candidate.exists():
-                dest = wem_out_dir / wem_candidate.name
+                if preserve_tree_root is not None:
+                    try:
+                        rel = ogg.relative_to(preserve_tree_root).with_suffix(".wem")
+                    except ValueError:
+                        logger.warning(
+                            "OGG path is outside preserve_tree_root (%s): %s",
+                            preserve_tree_root,
+                            ogg,
+                        )
+                        rel = Path(wem_candidate.name)
+                else:
+                    rel = Path(wem_candidate.name)
+
+                dest = wem_out_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    dest.unlink()
                 shutil.move(str(wem_candidate), dest)
                 produced.append(dest)
             else:

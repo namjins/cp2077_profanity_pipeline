@@ -56,12 +56,14 @@ def extract_voiceover_maps(config: Config, voice_extract_dir: Path) -> Path:
 
     for archive in archives:
         print(f"  Extracting voiceover maps from: {archive.name}")
+        archive_maps_dir = maps_dir / archive.parent.name
+        archive_maps_dir.mkdir(parents=True, exist_ok=True)
         for map_name in VOICEOVER_MAP_FILES:
             cmd = [
                 str(config.wolvenkit_cli),
                 "unbundle",
                 "-p", str(archive),
-                "-o", str(maps_dir),
+                "-o", str(archive_maps_dir),
                 "--pattern", f"*{map_name}",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -99,13 +101,16 @@ def extract_voiceover_maps(config: Config, voice_extract_dir: Path) -> Path:
     return maps_dir
 
 
-def build_string_id_to_wem_map(maps_dir: Path) -> dict[str, dict[str, str]]:
-    """Parse voiceover map files and build a stringId -> {female, male} wem path lookup.
+def build_string_id_to_wem_map(maps_dir: Path) -> dict[str, dict[str, list[str]]]:
+    """Parse voiceover map files and build a stringId -> {female, male} path lookup.
 
-    Returns a dict mapping stringId (str) to {"female": depot_path, "male": depot_path}.
-    Depot paths use backslash notation, e.g. 'base\\localization\\en-us\\vo\\file.wem'.
+    Returns a dict mapping stringId (str) to:
+      {"female": [depot_path, ...], "male": [depot_path, ...]}
+
+    A single stringId can map to multiple depot paths (for example vo/vo_holocall/
+    vo_helmet variants), so we preserve all paths in stable order.
     """
-    lookup: dict[str, dict[str, str]] = {}
+    lookup: dict[str, dict[str, list[str]]] = {}
 
     json_json_files = list(maps_dir.rglob("*.json.json"))
     if not json_json_files:
@@ -145,13 +150,15 @@ def build_string_id_to_wem_map(maps_dir: Path) -> dict[str, dict[str, str]]:
             if female_path or male_path:
                 existing = lookup.get(string_id)
                 if existing:
-                    # Merge: keep non-empty paths from both sources
-                    if female_path and not existing["female"]:
-                        existing["female"] = female_path
-                    if male_path and not existing["male"]:
-                        existing["male"] = male_path
+                    if female_path and female_path not in existing["female"]:
+                        existing["female"].append(female_path)
+                    if male_path and male_path not in existing["male"]:
+                        existing["male"].append(male_path)
                 else:
-                    lookup[string_id] = {"female": female_path, "male": male_path}
+                    lookup[string_id] = {
+                        "female": [female_path] if female_path else [],
+                        "male": [male_path] if male_path else [],
+                    }
 
     print(f"  Built voiceover map: {len(lookup)} entries from {len(json_json_files)} file(s)"
           + (f" ({parse_errors} parse error(s))" if parse_errors else ""))
@@ -160,7 +167,7 @@ def build_string_id_to_wem_map(maps_dir: Path) -> dict[str, dict[str, str]]:
 
 def find_wem_paths_for_records(
     patch_records: list,
-    voiceover_map: dict[str, dict[str, str]],
+    voiceover_map: dict[str, dict[str, list[str]]],
 ) -> list[tuple[str, str]]:
     """Return deduplicated list of (string_id, depot_path) tuples for patched records.
 
@@ -186,7 +193,14 @@ def find_wem_paths_for_records(
 
         matched += 1
         paths = voiceover_map[string_id]
-        for depot_path in (paths.get("female", ""), paths.get("male", "")):
+        if record.field == "femaleVariant":
+            preferred_paths = paths.get("female", []) + paths.get("male", [])
+        elif record.field == "maleVariant":
+            preferred_paths = paths.get("male", []) + paths.get("female", [])
+        else:
+            preferred_paths = paths.get("female", []) + paths.get("male", [])
+
+        for depot_path in preferred_paths:
             if depot_path and depot_path not in seen:
                 seen.add(depot_path)
                 targets.append((string_id, depot_path))
@@ -216,33 +230,34 @@ def extract_target_wem_files(
     if not archives:
         raise FileNotFoundError("No lang_en_voice.archive found.")
 
-    # Collect all filename stems from depot paths
-    # depot path format: base\localization\en-us\vo\filename.wem
-    stems = sorted({Path(p.replace("\\", "/")).stem for p in depot_paths})
-    print(f"  Extracting {len(stems)} target .wem file(s) from {len(archives)} archive(s)...")
+    def _normalize_depot_path(path: str) -> str:
+        return path.replace("\\", "/").lstrip("/")
 
-    # Batch stems into regex groups to reduce WolvenKit invocations.
-    # WolvenKit --regex matches against the full depot path, so we
-    # use a partial match on the filename stem.
+    target_paths = sorted({_normalize_depot_path(p) for p in depot_paths if p})
+    print(f"  Extracting {len(target_paths)} target .wem path(s) from {len(archives)} archive(s)...")
+
+    # Batch full depot paths into regex groups to reduce WolvenKit invocations.
+    # Matching full paths avoids basename collisions across different folders.
     # Limit batch size to avoid command-line length issues.
-    batch_size = 50
-    batches = [stems[i : i + batch_size] for i in range(0, len(stems), batch_size)]
+    batch_size = 30
+    batches = [target_paths[i : i + batch_size] for i in range(0, len(target_paths), batch_size)]
 
-    # Flatten into (batch, archive) jobs and run in parallel
-    jobs = [(batch, archive) for batch in batches for archive in archives]
-
-    def _extract_job(batch: list[str], archive: Path) -> None:
-        regex_pattern = "(" + "|".join(re.escape(s) for s in batch) + r")\.wem$"
-        cmd = [
-            str(config.wolvenkit_cli),
-            "uncook",
-            str(archive),
-            "-o", str(wem_dir),
-            "--regex", regex_pattern,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0 and result.stderr:
-            print(f"  Warning: uncook failed for batch in {archive.name}: {result.stderr.strip()[:500]}")
+    def _extract_batch(batch: list[str]) -> None:
+        escaped_paths = [re.escape(p).replace("/", r"[\\/]") for p in batch]
+        regex_pattern = "(" + "|".join(escaped_paths) + r")$"
+        # Extract from archives in deterministic order (base first, EP1 second)
+        # so overlapping depot paths are stable and not subject to write races.
+        for archive in archives:
+            cmd = [
+                str(config.wolvenkit_cli),
+                "uncook",
+                str(archive),
+                "-o", str(wem_dir),
+                "--regex", regex_pattern,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0 and result.stderr:
+                print(f"  Warning: uncook failed for batch in {archive.name}: {result.stderr.strip()[:500]}")
 
     with Progress(
         TextColumn("  [bold]{task.description}"),
@@ -251,10 +266,10 @@ def extract_target_wem_files(
         TimeRemainingColumn(),
     ) as progress:
         task = progress.add_task(
-            f"Extracting voice files ({config.workers} workers)", total=len(jobs)
+            f"Extracting voice files ({config.workers} workers)", total=len(batches)
         )
         with ThreadPoolExecutor(max_workers=config.workers) as executor:
-            futures = {executor.submit(_extract_job, b, a): (b, a) for b, a in jobs}
+            futures = {executor.submit(_extract_batch, b): b for b in batches}
             for future in as_completed(futures):
                 future.result()
                 progress.advance(task)
@@ -265,6 +280,38 @@ def extract_target_wem_files(
     print(f"  Extracted {len(extracted_wem)} .wem file(s) and {len(extracted_ogg)} .Ogg file(s)")
 
     return wem_dir
+
+
+def collect_target_ogg_files(wem_dir: Path, depot_paths: list[str]) -> list[Path]:
+    """Resolve extracted .Ogg files by full depot path, not by basename."""
+    ogg_files = list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg"))
+    if not ogg_files:
+        return []
+
+    ogg_index: dict[str, Path] = {}
+    for ogg in ogg_files:
+        rel = ogg.relative_to(wem_dir).as_posix().lower()
+        ogg_index[rel] = ogg
+
+    selected: list[Path] = []
+    missing: list[str] = []
+    seen: set[str] = set()
+    for depot_path in sorted({p.replace("\\", "/").lstrip("/") for p in depot_paths if p}):
+        rel_ogg = str(Path(depot_path).with_suffix(".ogg")).replace("\\", "/").lower().lstrip("/")
+        match = ogg_index.get(rel_ogg)
+        if match:
+            if rel_ogg not in seen:
+                seen.add(rel_ogg)
+                selected.append(match)
+        else:
+            missing.append(rel_ogg)
+
+    if missing:
+        sample = ", ".join(missing[:5])
+        print(f"  Warning: {len(missing)} target .Ogg path(s) missing after uncook. Sample: {sample}")
+
+    print(f"  Selected {len(selected)} target .Ogg file(s) by depot path")
+    return selected
 
 
 def process_audio_with_monkeyplug(
@@ -287,23 +334,25 @@ def process_audio_with_monkeyplug(
     wsl_wordlist = to_wsl_path(config.wordlist_path)
 
     def _process_one(ogg: Path) -> Path | None:
-        out_file = processed_dir / ogg.name
+        rel_path = ogg.relative_to(wem_dir)
+        out_file = processed_dir / rel_path
+        out_file.parent.mkdir(parents=True, exist_ok=True)
         # Voice lines are mono; pass channels=1 so monkeyplug outputs mono .Ogg
         return run_monkeyplug_on_file(ogg, out_file, wsl_wordlist, config.whisper_model, channels=1)
 
-    # Collisions are possible when base/ep1 contain files with the same basename.
-    # Deduplicate by filename because downstream replacement is filename-based.
-    unique_ogg_by_name: dict[str, Path] = {}
+    # Deduplicate exact relative paths if uncook produced duplicates.
+    unique_ogg_by_rel: dict[str, Path] = {}
     duplicate_count = 0
     for ogg in sorted(ogg_files, key=lambda p: str(p)):
-        if ogg.name in unique_ogg_by_name:
+        rel_key = ogg.relative_to(wem_dir).as_posix().lower()
+        if rel_key in unique_ogg_by_rel:
             duplicate_count += 1
             continue
-        unique_ogg_by_name[ogg.name] = ogg
+        unique_ogg_by_rel[rel_key] = ogg
 
-    selected_ogg_files = list(unique_ogg_by_name.values())
+    selected_ogg_files = list(unique_ogg_by_rel.values())
     if duplicate_count:
-        print(f"  Deduplicated {duplicate_count} duplicate .Ogg input(s) by basename")
+        print(f"  Deduplicated {duplicate_count} duplicate .Ogg input(s) by relative path")
 
     failed_count = 0
     processed: list[Path] = []
@@ -334,31 +383,32 @@ def process_audio_with_monkeyplug(
 
     # Write audio processing audit log
     audit_path = wem_dir.parent / "audio_processing_log.csv"
-    processed_names = {p.name for p in processed}
+    processed_rel = {p.relative_to(processed_dir).as_posix().lower() for p in processed}
     with open(audit_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["filename", "status"])
+        writer.writerow(["relative_path", "status"])
         for ogg in selected_ogg_files:
-            status = "processed" if ogg.name in processed_names else "failed"
-            writer.writerow([ogg.name, status])
+            rel = ogg.relative_to(wem_dir).as_posix()
+            status = "processed" if rel.lower() in processed_rel else "failed"
+            writer.writerow([rel, status])
     print(f"  Audio processing log written to {audit_path}")
 
     return processed
 
 
-def pack_voice_archive(config: Config, wem_dir: Path, processed_wem_files: list[Path]) -> Path:
+def pack_voice_archive(
+    config: Config,
+    wem_dir: Path,
+    processed_wem_files: list[Path],
+    processed_wem_root: Path,
+) -> Path:
     """Replace original .wem files with processed ones and repack into a voice archive.
 
     Copies processed .wem files into the extracted voice directory tree (preserving
     depot path structure), then runs WolvenKit pack.
     Returns the directory containing the repacked .archive.
     """
-    # Build a filename -> path lookup once to avoid an rglob call per processed file
-    wem_lookup: dict[str, list[Path]] = {}
-    for f in wem_dir.rglob("*.wem"):
-        wem_lookup.setdefault(f.name, []).append(f)
-
-    # Replace .wem files in the extraction tree with processed versions
+    # Replace .wem files in the extraction tree using exact relative paths.
     replaced = 0
     not_found = 0
     with Progress(
@@ -369,11 +419,19 @@ def pack_voice_archive(config: Config, wem_dir: Path, processed_wem_files: list[
     ) as progress:
         task = progress.add_task("Replacing voice .wem files", total=len(processed_wem_files))
         for wem_file in processed_wem_files:
-            matches = wem_lookup.get(wem_file.name, [])
-            if not matches:
-                print(f"  Warning: no original .wem found for processed file {wem_file.name}")
+            try:
+                rel = wem_file.relative_to(processed_wem_root)
+            except ValueError:
+                print(f"  Warning: processed .wem is outside expected root: {wem_file}")
                 not_found += 1
-            for orig in matches:
+                progress.advance(task)
+                continue
+
+            orig = wem_dir / rel
+            if not orig.exists():
+                print(f"  Warning: no original .wem found for processed path {rel.as_posix()}")
+                not_found += 1
+            else:
                 shutil.copy2(wem_file, orig)
                 replaced += 1
             progress.advance(task)
@@ -458,7 +516,7 @@ def run_audio_pipeline(config: Config, patch_records: list) -> Path | None:
 
     # Step C: extract target .wem + .Ogg files from voice archive
     wem_dir = extract_target_wem_files(config, voice_dir, depot_paths)
-    ogg_files = list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg"))
+    ogg_files = collect_target_ogg_files(wem_dir, depot_paths)
     if not ogg_files:
         raise RuntimeError("WolvenKit uncook produced no .Ogg files for matched voice lines.")
 
@@ -468,13 +526,19 @@ def run_audio_pipeline(config: Config, patch_records: list) -> Path | None:
         raise RuntimeError("monkeyplug produced no output files for matched voice lines.")
 
     # Step E: convert processed .Ogg -> .wem
+    processed_ogg_root = wem_dir.parent / "processed_ogg"
     wem_out_dir = voice_dir / "processed_wem"
-    processed_wem = convert_ogg_to_wem(config, processed_ogg, wem_out_dir)
+    processed_wem = convert_ogg_to_wem(
+        config,
+        processed_ogg,
+        wem_out_dir,
+        preserve_tree_root=processed_ogg_root,
+    )
     if not processed_wem:
         raise RuntimeError("sound2wem produced no .wem files from processed voice audio.")
 
     # Step F: repack voice archive
-    packed_dir = pack_voice_archive(config, wem_dir, processed_wem)
+    packed_dir = pack_voice_archive(config, wem_dir, processed_wem, wem_out_dir)
     elapsed = time.time() - pipeline_start
     print(f"  Audio pipeline completed in {elapsed:.1f}s")
     return packed_dir
