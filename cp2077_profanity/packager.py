@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from .config import Config
+from .fileutil import atomic_write
 
 
 def create_zip(
@@ -83,7 +84,7 @@ def write_summary(
     for word in sorted(unique_words, key=str.lower):
         lines.append(f"  - {word}")
 
-    with open(summary_path, "w", encoding="utf-8") as f:
+    with atomic_write(summary_path, encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     return summary_path

@@ -36,6 +36,10 @@ whisper_model = "base"
 monkeyplug_workers = 6
 
 [radio]
+# Minimum track duration in seconds for discover-radio to classify a file as a song (vs SFX).
+# Increase to skip shorter audio (intros, jingles); decrease to include more tracks.
+min_duration_seconds = 90
 # Path to a custom curated radio track list (JSON array of {hash, station, title} objects).
 # If not set, the bundled data/radio_tracks.json placeholder is used.
+# Generate with: cp2077-profanity discover-radio --config config.toml
 # radio_tracks_file = "C:\\path\\to\\my_radio_tracks.json"

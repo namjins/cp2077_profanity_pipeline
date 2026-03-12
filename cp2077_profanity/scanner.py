@@ -41,7 +41,7 @@ def normalize_elongation(text: str) -> tuple[str, list[int], list[int]]:
 
     Runs of 1-2 identical characters are left untouched, preserving legitimate
     double letters (e.g. "good" has "oo" = 2 chars, stays as-is).
-    Runs of 3+ are elongation (e.g. "gooood" → "god", "fuuuuuck" → "fuck").
+    Runs of 3+ are elongation (e.g. "gooood" -> "god", "fuuuuuck" -> "fuck").
 
     The span mapping allows original text replacement: when matching "fuck" in
     normalized "fuuuuuck", the span mapping shows the match covers all 9 original
@@ -90,6 +90,9 @@ def build_pattern(words: list[str]) -> regex.Pattern:
     modifying the pattern — so patterns remain exact and false positives are avoided.
     Case-insensitive.
     """
+    if not words:
+        raise ValueError("Wordlist is empty — cannot build a match pattern")
+
     # Sort by length descending so longer phrases match first
     sorted_words = sorted(words, key=len, reverse=True)
     escaped = [regex.escape(w) for w in sorted_words]

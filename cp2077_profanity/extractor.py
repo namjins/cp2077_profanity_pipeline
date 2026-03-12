@@ -1,5 +1,6 @@
 """Extract English localization JSON files from Cyberpunk 2077 archives using WolvenKit CLI."""
 
+import logging
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -7,6 +8,8 @@ from pathlib import Path
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 
 from .config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def find_locale_archives(game_dir: Path) -> list[Path]:
@@ -61,6 +64,8 @@ def unbundle_archives(config: Config, extract_dir: Path) -> None:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
+            logger.warning("WolvenKit unbundle failed for %s (exit %d): %s",
+                           archive.name, result.returncode, (result.stderr or "").strip()[:500])
             print(f"  Warning: WolvenKit returned non-zero for {archive.name}")
             if result.stderr:
                 print(f"  stderr: {result.stderr.strip()}")
@@ -90,6 +95,8 @@ def convert_cr2w_to_json(config: Config, extract_dir: Path) -> list[Path]:
         cmd = [str(config.wolvenkit_cli), "cr2w", "-s", str(cr2w_file)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
+            logger.warning("cr2w conversion failed for %s (exit %d): %s",
+                           cr2w_file.name, result.returncode, (result.stderr or "").strip()[:500])
             print(f"  Warning: cr2w conversion failed for {cr2w_file.name}")
             if result.stderr:
                 print(f"  stderr: {result.stderr.strip()}")
@@ -97,6 +104,7 @@ def convert_cr2w_to_json(config: Config, extract_dir: Path) -> list[Path]:
         return expected_output if expected_output.exists() else None
 
     produced: list[Path] = []
+    failed_count = 0
     with Progress(
         TextColumn("  [bold]{task.description}"),
         BarColumn(),
@@ -112,7 +120,19 @@ def convert_cr2w_to_json(config: Config, extract_dir: Path) -> list[Path]:
                 result = future.result()
                 if result:
                     produced.append(result)
+                else:
+                    failed_count += 1
                 progress.advance(task)
+
+    if failed_count:
+        total = len(cr2w_files)
+        pct = (failed_count / total) * 100 if total else 0
+        print(f"  Warning: {failed_count}/{total} CR2W conversion(s) failed ({pct:.1f}%)")
+        if pct > 10:
+            raise RuntimeError(
+                f"CR2W conversion failure rate too high: {failed_count}/{total} ({pct:.1f}%). "
+                "Check WolvenKit installation and game files."
+            )
 
     return sorted(produced)
 
@@ -126,7 +146,10 @@ def extract_archives(config: Config) -> Path:
     extract_dir.mkdir(parents=True, exist_ok=True)
 
     unbundle_archives(config, extract_dir)
-    convert_cr2w_to_json(config, extract_dir)
+    produced = convert_cr2w_to_json(config, extract_dir)
+    print(f"  CR2W conversion produced {len(produced)} .json.json file(s)")
+    if not produced:
+        print("  Warning: no JSON files were produced -- check WolvenKit cr2w output above")
 
     return extract_dir
 

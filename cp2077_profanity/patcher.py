@@ -7,6 +7,7 @@ from pathlib import Path
 
 import regex
 
+from .fileutil import atomic_write
 from .scanner import _extract_entries, build_pattern, load_wordlist, normalize_elongation
 
 
@@ -26,9 +27,9 @@ class PatchRecord:
 def patch_value(value: str, pattern: regex.Pattern) -> tuple[str, list[str]]:
     """Apply asterisk replacement to all profanity matches in a string value.
 
-    Normalizes elongation before matching (e.g. "fuuuuuck" → detected as "fuck"),
+    Normalizes elongation before matching (e.g. "fuuuuuck" -> detected as "fuck"),
     then replaces the full original span with asterisks of equal character length
-    (e.g. "fuuuuuck" → "*********").
+    (e.g. "fuuuuuck" -> "*********").
 
     Returns the patched string and a list of normalized words that were replaced.
     """
@@ -96,8 +97,11 @@ def patch_json_file(
                 modified = True
 
     if modified:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # Verify the patched data is still valid JSON before writing
+        serialized = json.dumps(data, ensure_ascii=False, indent=2)
+        json.loads(serialized)  # sanity check: round-trip parse
+        with atomic_write(filepath, encoding="utf-8") as f:
+            f.write(serialized)
 
     return records
 
@@ -107,32 +111,47 @@ def load_patch_log(log_path: Path) -> list[PatchRecord]:
 
     Used to resume a pipeline run without re-scanning already-patched files.
     words_replaced is left empty since it is not needed for the audio pipeline.
+
+    Raises ValueError if the CSV is malformed (missing required columns).
     """
     if not log_path.exists():
         raise FileNotFoundError(f"Patch log not found: {log_path}")
 
+    required_columns = {"filepath", "string_key", "string_id", "field", "original", "replacement"}
+
     records: list[PatchRecord] = []
     with open(log_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            records.append(
-                PatchRecord(
-                    filepath=row["filepath"],
-                    string_key=row["string_key"],
-                    string_id=row["string_id"] or None,
-                    field=row["field"],
-                    original=row["original"],
-                    replacement=row["replacement"],
-                    words_replaced=[],
+
+        # Validate columns before iterating
+        if reader.fieldnames is None:
+            raise ValueError(f"Patch log is empty: {log_path}")
+        missing = required_columns - set(reader.fieldnames)
+        if missing:
+            raise ValueError(f"Patch log missing columns: {missing}")
+
+        for line_num, row in enumerate(reader, start=2):
+            try:
+                records.append(
+                    PatchRecord(
+                        filepath=row["filepath"],
+                        string_key=row["string_key"],
+                        string_id=row["string_id"] or None,
+                        field=row["field"],
+                        original=row["original"],
+                        replacement=row["replacement"],
+                        words_replaced=[],
+                    )
                 )
-            )
+            except KeyError as e:
+                print(f"  Warning: skipping malformed row {line_num} in patch log: {e}")
+
     return records
 
 
 def write_patch_log(records: list[PatchRecord], output_path: Path) -> None:
     """Write patch records to a CSV audit log."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
+    with atomic_write(output_path, newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["filepath", "string_key", "string_id", "field", "original", "replacement"])
         for rec in records:
@@ -146,6 +165,12 @@ def patch_all(
 
     Returns all patch records.
     """
+    # Idempotency guard: warn if a patch log already exists from a previous run
+    if log_path.exists() and log_path.stat().st_size > 0:
+        print(f"  Warning: existing patch log found at {log_path}.")
+        print("  Re-patching already-patched files will find no matches (asterisks don't match words).")
+        print("  Use --clean for a fresh run, or --skip-text-repack to reuse existing patches.")
+
     words = load_wordlist(wordlist_path)
     if not words:
         print("  Warning: wordlist is empty, nothing to patch.")

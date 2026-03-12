@@ -1,13 +1,15 @@
 """Radio music pipeline: extract, multi-pass filter, and repack radio song audio."""
 
+import csv
 import json
+import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from importlib import resources
 from pathlib import Path
 
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
 from .config import Config
 from .wsl_utils import check_monkeyplug, convert_ogg_to_wem, detect_channels, run_monkeyplug_on_file, to_wsl_path
@@ -49,14 +51,28 @@ def load_radio_tracks(tracks_file: Path | None) -> list[dict]:
     if tracks_file is not None:
         if not tracks_file.exists():
             raise FileNotFoundError(f"Radio tracks file not found: {tracks_file}")
+        source = tracks_file
         with open(tracks_file, encoding="utf-8") as f:
-            return json.load(f)
+            try:
+                tracks = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Radio tracks file is not valid JSON: {tracks_file}: {e}") from e
+    else:
+        # Use bundled default
+        source = "bundled data/radio_tracks.json"
+        pkg = resources.files("cp2077_profanity") / "data" / "radio_tracks.json"
+        with resources.as_file(pkg) as p:
+            with open(p, encoding="utf-8") as f:
+                tracks = json.load(f)
 
-    # Use bundled default
-    pkg = resources.files("cp2077_profanity") / "data" / "radio_tracks.json"
-    with resources.as_file(pkg) as p:
-        with open(p, encoding="utf-8") as f:
-            return json.load(f)
+    # Validate schema: each track must have a "hash" key
+    if not isinstance(tracks, list):
+        raise ValueError(f"Radio tracks file must contain a JSON array, got {type(tracks).__name__}: {source}")
+    for i, track in enumerate(tracks):
+        if not isinstance(track, dict) or "hash" not in track:
+            raise ValueError(f"Track {i} missing required 'hash' key in {source}")
+
+    return tracks
 
 
 def extract_radio_wem_files(
@@ -87,7 +103,7 @@ def extract_radio_wem_files(
     batches = [real_hashes[i : i + batch_size] for i in range(0, len(real_hashes), batch_size)]
 
     def _extract_batch(batch: list[str]) -> None:
-        regex_pattern = "(" + "|".join(batch) + r")\.wem$"
+        regex_pattern = "(" + "|".join(re.escape(h) for h in batch) + r")\.wem$"
         cmd = [
             str(config.wolvenkit_cli),
             "uncook",
@@ -124,9 +140,9 @@ def process_radio_multipass(
 ) -> list[Path]:
     """Run 3 sequential monkeyplug passes on radio .Ogg files.
 
-    Pass 1: large-v3, 1 worker  → radio_dir/pass_1/
-    Pass 2: medium,   2 workers → radio_dir/pass_2/ (input = pass_1 output)
-    Pass 3: base,     6 workers → radio_dir/pass_3/ (input = pass_2 output)
+    Pass 1: large-v3, 1 worker  -> radio_dir/pass_1/
+    Pass 2: medium,   2 workers -> radio_dir/pass_2/ (input = pass_1 output)
+    Pass 3: base,     6 workers -> radio_dir/pass_3/ (input = pass_2 output)
 
     Channel count is detected from the first .Ogg file and applied to all calls.
     Returns list of final processed .Ogg paths (from pass_3/).
@@ -195,26 +211,49 @@ def pack_radio_archive(
     non-.wem files, then runs WolvenKit pack.
     Returns the directory containing the repacked .archive.
     """
+    # Build a filename -> path lookup once to avoid an rglob call per processed file
+    wem_lookup: dict[str, list[Path]] = {}
+    for f in wem_dir.rglob("*.wem"):
+        wem_lookup.setdefault(f.name, []).append(f)
+
     replaced = 0
-    for wem_file in processed_wem_files:
-        originals = list(wem_dir.rglob(wem_file.name))
-        for orig in originals:
-            if orig.suffix == ".wem":
+    with Progress(
+        TextColumn("  [bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+    ) as progress:
+        task = progress.add_task("Replacing radio .wem files", total=len(processed_wem_files))
+        for wem_file in processed_wem_files:
+            for orig in wem_lookup.get(wem_file.name, []):
                 shutil.copy2(wem_file, orig)
                 replaced += 1
+            progress.advance(task)
 
     print(f"  Replaced {replaced} radio .wem file(s) in extraction tree")
 
-    # Remove .Ogg files and any non-.wem files uncook may have produced
+    # Remove non-.wem files (Ogg conversions, etc.) before packing
     for f in wem_dir.rglob("*"):
-        if f.is_file() and f.suffix not in (".wem",):
-            f.unlink()
+        if f.is_file() and f.suffix != ".wem":
+            f.unlink(missing_ok=True)
 
     print(f"  Repacking radio archive from: {wem_dir}")
     cmd = [str(config.wolvenkit_cli), "pack", "-p", str(wem_dir)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"WolvenKit pack failed for radio archive: {result.stderr.strip()}")
+    with Progress(
+        TextColumn("  [bold]{task.description}"),
+        SpinnerColumn(),
+        TextColumn("{task.completed} file(s) packed"),
+    ) as progress:
+        task = progress.add_task("Packing radio archive", total=None)
+        with subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        ) as proc:
+            for line in iter(proc.stdout.readline, ""):
+                if line.strip():
+                    progress.advance(task)
+            proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(f"WolvenKit pack failed for radio archive (exit {proc.returncode})")
 
     packed_dir = wem_dir.parent
     archives = list(packed_dir.glob("*.archive"))
@@ -226,7 +265,7 @@ def pack_radio_archive(
 
 
 def run_radio_pipeline(config: Config) -> Path | None:
-    """Full radio music pipeline: load tracks → extract → multi-pass filter → convert → repack.
+    """Full radio music pipeline: load tracks -> extract -> multi-pass filter -> convert -> repack.
 
     Returns the directory containing the radio .archive, or None if no tracks
     were found or the track list contains only placeholders.
@@ -268,7 +307,18 @@ def run_radio_pipeline(config: Config) -> Path | None:
         print("  Warning: radio multi-pass processing produced no output.")
         return None
 
-    # Step C: convert processed .Ogg → .wem
+    # Write radio processing audit log
+    audit_path = radio_dir / "radio_processing_log.csv"
+    processed_names = {p.name for p in processed_ogg}
+    with open(audit_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["filename", "status"])
+        for ogg in ogg_files:
+            status = "processed" if ogg.name in processed_names else "failed"
+            writer.writerow([ogg.name, status])
+    print(f"  Radio processing log written to {audit_path}")
+
+    # Step C: convert processed .Ogg -> .wem
     wem_out_dir = radio_dir / "processed_wem"
     processed_wem = convert_ogg_to_wem(config, processed_ogg, wem_out_dir)
     if not processed_wem:
