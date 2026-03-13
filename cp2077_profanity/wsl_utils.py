@@ -195,12 +195,16 @@ def convert_ogg_to_wem(
     ogg_files: list[Path],
     wem_out_dir: Path,
     preserve_tree_root: Path | None = None,
+    sample_rate: int = 48000,
 ) -> list[Path]:
     """Convert processed .Ogg files back to .wem using sound2wem (Wwise CLI wrapper).
 
     Runs sound2wem from its own directory so it can find/create its Wwise project.
     If preserve_tree_root is provided, output .wem files preserve paths relative to
     that root; otherwise files are written flat by basename (legacy behavior).
+
+    sample_rate: Target sample rate in Hz (default 48000, matching CP2077's audio).
+    monkeyplug may downsample to 44.1 kHz, so we force the rate back via sound2wem.
     Returns list of produced .wem file paths.
     """
     import os
@@ -226,8 +230,10 @@ def convert_ogg_to_wem(
     ) as progress:
         task = progress.add_task("Converting OGG -> WEM", total=len(ogg_files))
         for ogg in ogg_files:
+            # monkeyplug may downsample (e.g. 48 kHz → 44.1 kHz).  Force the
+            # sample rate back to the game's expected value via sound2wem.
             result = subprocess.run(
-                ["cmd", "/c", str(sound2wem), str(ogg)],
+                ["cmd", "/c", str(sound2wem), f"--samplerate:{sample_rate}", str(ogg)],
                 capture_output=True, text=True,
                 cwd=str(sound2wem.parent),
                 env=env,
