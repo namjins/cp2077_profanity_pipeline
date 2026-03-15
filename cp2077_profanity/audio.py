@@ -276,7 +276,7 @@ def extract_target_wem_files(
 
     # Log extraction results
     extracted_wem = list(wem_dir.rglob("*.wem"))
-    extracted_ogg = list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg"))
+    extracted_ogg = list(wem_dir.rglob("*.ogg"))
     print(f"  Extracted {len(extracted_wem)} .wem file(s) and {len(extracted_ogg)} .Ogg file(s)")
 
     return wem_dir
@@ -284,7 +284,7 @@ def extract_target_wem_files(
 
 def collect_target_ogg_files(wem_dir: Path, depot_paths: list[str]) -> list[Path]:
     """Resolve extracted .Ogg files by full depot path, not by basename."""
-    ogg_files = list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg"))
+    ogg_files = list(wem_dir.rglob("*.ogg"))
     if not ogg_files:
         return []
 

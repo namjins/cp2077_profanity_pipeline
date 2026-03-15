@@ -199,16 +199,24 @@ def convert_ogg_to_wem(
 ) -> list[Path]:
     """Convert processed .Ogg files back to .wem using sound2wem (Wwise CLI wrapper).
 
-    Runs sound2wem from its own directory so it can find/create its Wwise project.
-    If preserve_tree_root is provided, output .wem files preserve paths relative to
-    that root; otherwise files are written flat by basename (legacy behavior).
+    Batches multiple files per sound2wem invocation to avoid Wwise cache/stale-state
+    bugs that occur when invoking WwiseConsole thousands of times sequentially.
+
+    Files sharing a basename (e.g. vo/ and vo_holocall/ variants of the same line)
+    are placed in separate batches to prevent sound2wem's name_modifier from
+    silently renaming the output.  Batch sizes are capped by Windows command-line
+    length (~8191 chars).
+
+    Pre-batch cleanup removes stale .wem files and audiotemp from the sound2wem
+    directory.  Post-batch validation matches produced .wem files to expected
+    basenames and retries any failures individually as a fallback.
 
     sample_rate: Target sample rate in Hz (default 48000, matching CP2077's audio).
-    monkeyplug may downsample to 44.1 kHz, so we force the rate back via sound2wem.
     Returns list of produced .wem file paths.
     """
     import os
     import shutil
+    from collections import defaultdict
 
     from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 
@@ -221,6 +229,98 @@ def convert_ogg_to_wem(
     produced: list[Path] = []
     env = os.environ.copy()
     env["WWISEROOT"] = str(config.wwise_dir)
+    s2w_dir = sound2wem.parent
+
+    # -- helpers ----------------------------------------------------------
+
+    def _clean_s2w_dir() -> None:
+        """Remove stale .wem, audiotemp, and list.wsources from sound2wem dir."""
+        for stale in s2w_dir.glob("*.wem"):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+        audiotemp = s2w_dir / "audiotemp"
+        if audiotemp.exists():
+            shutil.rmtree(audiotemp, ignore_errors=True)
+        wsources = s2w_dir / "list.wsources"
+        if wsources.exists():
+            try:
+                wsources.unlink()
+            except OSError:
+                pass
+
+    def _dest_for_ogg(ogg: Path, wem_name: str) -> Path:
+        """Compute the output destination for a .wem produced from *ogg*."""
+        if preserve_tree_root is not None:
+            try:
+                rel = ogg.relative_to(preserve_tree_root).with_suffix(".wem")
+            except ValueError:
+                logger.warning(
+                    "OGG path is outside preserve_tree_root (%s): %s",
+                    preserve_tree_root, ogg,
+                )
+                rel = Path(wem_name)
+        else:
+            rel = Path(wem_name)
+        return wem_out_dir / rel
+
+    def _move_wem(ogg: Path, wem_file: Path) -> Path | None:
+        """Move a produced .wem to its final destination.  Returns dest or None."""
+        dest = _dest_for_ogg(ogg, wem_file.name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            dest.unlink()
+        shutil.move(str(wem_file), str(dest))
+        return dest
+
+    # -- group by basename to prevent collisions --------------------------
+
+    basename_groups: dict[str, list[Path]] = defaultdict(list)
+    for ogg in ogg_files:
+        key = ogg.with_suffix(".wem").name.lower()
+        basename_groups[key].append(ogg)
+
+    # Build "rounds": round[i] holds the i-th file from each basename group.
+    # Within a round every basename is unique, so sound2wem won't trigger its
+    # name_modifier renaming logic.
+    max_copies = max((len(v) for v in basename_groups.values()), default=0)
+    rounds: list[list[Path]] = []
+    for i in range(max_copies):
+        round_files = []
+        for files in basename_groups.values():
+            if i < len(files):
+                round_files.append(files[i])
+        rounds.append(round_files)
+
+    # Split each round into batches that fit the Windows command-line limit.
+    MAX_CMD_LEN = 7500
+    base_cmd_len = len(str(sound2wem)) + len(f"--samplerate:{sample_rate}") + 30
+    batches: list[list[Path]] = []
+    for round_files in rounds:
+        current_batch: list[Path] = []
+        current_len = base_cmd_len
+        for ogg in sorted(round_files, key=lambda p: p.name.lower()):
+            path_len = len(str(ogg)) + 3  # quotes + space
+            if current_batch and current_len + path_len > MAX_CMD_LEN:
+                batches.append(current_batch)
+                current_batch = []
+                current_len = base_cmd_len
+            current_batch.append(ogg)
+            current_len += path_len
+        if current_batch:
+            batches.append(current_batch)
+
+    total_files = len(ogg_files)
+    logger.info(
+        "OGG->WEM conversion: %d files, %d unique basenames, %d collisions, %d batches",
+        total_files, len(basename_groups),
+        sum(1 for v in basename_groups.values() if len(v) > 1), len(batches),
+    )
+
+    # -- process batches --------------------------------------------------
+
+    failed_files: list[Path] = []
 
     with Progress(
         TextColumn("  [bold]{task.description}"),
@@ -228,44 +328,87 @@ def convert_ogg_to_wem(
         MofNCompleteColumn(),
         TimeRemainingColumn(),
     ) as progress:
-        task = progress.add_task("Converting OGG -> WEM", total=len(ogg_files))
-        for ogg in ogg_files:
-            # monkeyplug may downsample (e.g. 48 kHz → 44.1 kHz).  Force the
-            # sample rate back to the game's expected value via sound2wem.
-            result = subprocess.run(
-                ["cmd", "/c", str(sound2wem), f"--samplerate:{sample_rate}", str(ogg)],
-                capture_output=True, text=True,
-                cwd=str(sound2wem.parent),
-                env=env,
-            )
-            # sound2wem outputs .wem in its own directory
-            wem_candidate = sound2wem.parent / ogg.with_suffix(".wem").name
-            if wem_candidate.exists():
-                if preserve_tree_root is not None:
-                    try:
-                        rel = ogg.relative_to(preserve_tree_root).with_suffix(".wem")
-                    except ValueError:
-                        logger.warning(
-                            "OGG path is outside preserve_tree_root (%s): %s",
-                            preserve_tree_root,
-                            ogg,
-                        )
-                        rel = Path(wem_candidate.name)
-                else:
-                    rel = Path(wem_candidate.name)
+        task = progress.add_task("Converting OGG -> WEM", total=total_files)
 
-                dest = wem_out_dir / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                if dest.exists():
-                    dest.unlink()
-                shutil.move(str(wem_candidate), dest)
-                produced.append(dest)
-            else:
-                logger.warning("sound2wem produced no .wem for %s: %s",
-                               ogg.name, (result.stderr or "").strip()[:500])
-                print(f"  Warning: no .wem produced for {ogg.name}")
-                if result.stderr:
-                    print(f"  stderr: {result.stderr.strip()[:500]}")
-            progress.advance(task)
+        for batch in batches:
+            _clean_s2w_dir()
+
+            # Map expected wem basename -> source ogg for this batch.
+            basename_to_ogg: dict[str, Path] = {
+                ogg.with_suffix(".wem").name.lower(): ogg for ogg in batch
+            }
+
+            cmd = ["cmd", "/c", str(sound2wem), f"--samplerate:{sample_rate}"]
+            cmd.extend(str(ogg) for ogg in batch)
+            subprocess.run(
+                cmd, capture_output=True, text=True,
+                cwd=str(s2w_dir), env=env,
+            )
+
+            # Collect produced .wem files and match to source .ogg by basename.
+            produced_wems = list(s2w_dir.glob("*.wem"))
+            matched_basenames: set[str] = set()
+
+            for wem_file in produced_wems:
+                key = wem_file.name.lower()
+                ogg = basename_to_ogg.get(key)
+                if ogg:
+                    dest = _move_wem(ogg, wem_file)
+                    if dest:
+                        produced.append(dest)
+                    matched_basenames.add(key)
+                else:
+                    # Orphaned .wem (name_modifier hit or leftover)
+                    logger.warning("Unexpected .wem in sound2wem dir: %s", wem_file.name)
+                    try:
+                        wem_file.unlink()
+                    except OSError:
+                        pass
+
+            # Track files that were not produced.
+            for ogg in batch:
+                key = ogg.with_suffix(".wem").name.lower()
+                if key not in matched_basenames:
+                    failed_files.append(ogg)
+
+            progress.advance(task, len(batch))
+
+    # -- single-file fallback for batch failures --------------------------
+
+    if failed_files:
+        logger.warning("%d file(s) failed in batched conversion, retrying individually", len(failed_files))
+        print(f"  Retrying {len(failed_files)} failed file(s) individually...")
+
+        with Progress(
+            TextColumn("  [bold]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            task = progress.add_task("Retrying failed files", total=len(failed_files))
+            for ogg in failed_files:
+                _clean_s2w_dir()
+                result = subprocess.run(
+                    ["cmd", "/c", str(sound2wem), f"--samplerate:{sample_rate}", str(ogg)],
+                    capture_output=True, text=True,
+                    cwd=str(s2w_dir), env=env,
+                )
+                wem_candidate = s2w_dir / ogg.with_suffix(".wem").name
+                if wem_candidate.exists():
+                    dest = _move_wem(ogg, wem_candidate)
+                    if dest:
+                        produced.append(dest)
+                else:
+                    logger.warning("sound2wem retry also failed for %s: %s",
+                                   ogg.name, (result.stderr or "").strip()[:500])
+                    print(f"  Warning: no .wem produced for {ogg.name} (retry failed)")
+                progress.advance(task)
+
+    # Final cleanup
+    _clean_s2w_dir()
+
+    success_rate = (len(produced) / total_files * 100) if total_files else 0
+    logger.info("OGG->WEM complete: %d/%d produced (%.1f%%)", len(produced), total_files, success_rate)
+    print(f"  Converted {len(produced)}/{total_files} .wem file(s) ({success_rate:.1f}%)")
 
     return produced

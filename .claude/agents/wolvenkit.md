@@ -8,11 +8,14 @@ You are a WolvenKit CLI and Cyberpunk 2077 modding expert. You have deep knowled
 
 ## WolvenKit CLI Command Reference
 
-### Unbundle (extract archive)
+### Unbundle (extract archive, raw)
 ```
 WolvenKit.CLI.exe unbundle -p "PATH_TO_ARCHIVE" -o "OUTPUT_DIR"
 ```
+- Extracts files in their native format (no conversion)
+- Used for text/locale files (.json CR2W format)
 Optional filters:
+- `--pattern "*filename*"` — wildcard filter on file paths
 - `-w *.json` — wildcard filter by extension
 - `-r REGEX` — regex filter on file paths
 - `--hash HASH` — extract single file by hash
@@ -31,6 +34,17 @@ WolvenKit.CLI.exe cr2w -d "PATH_TO_JSON_JSON_FILE"
 ```
 - Input: a `.json.json` file
 - Output: the original CR2W binary file (`.json`)
+
+### Uncook (extract with format conversion)
+```
+WolvenKit.CLI.exe uncook "PATH_TO_ARCHIVE" -o "OUTPUT_DIR"
+```
+- Extracts AND converts files (e.g., .wem → .wem + .Ogg)
+- Used for voice/radio audio extraction (produces playable .Ogg alongside raw .wem)
+- `--regex PATTERN` — regex filter on internal depot paths (use `$` anchor for exact matching)
+
+**Critical: Concurrent uncook safety**
+Multiple uncook invocations writing to the same output directory can cause file contention. When parallelizing uncook (e.g., batched extraction in audio.py), ensure batches target non-overlapping depot paths. Each batch processes archives sequentially (base before EP1) to keep overlapping paths deterministic.
 
 ### Pack (repack archive)
 ```

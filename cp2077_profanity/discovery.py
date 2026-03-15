@@ -74,13 +74,13 @@ def discover_radio_tracks(
     rprint(f"  Radio archive: {archive}")
 
     # Extract (resume-friendly: skip if .Ogg files already exist)
-    existing_ogg = list(ogg_dir.rglob("*.Ogg")) + list(ogg_dir.rglob("*.ogg")) if ogg_dir.exists() else []
+    existing_ogg = list(ogg_dir.rglob("*.ogg")) if ogg_dir.exists() else []
     if existing_ogg:
         rprint(f"  Reusing {len(existing_ogg)} existing .Ogg file(s) from previous extraction")
         ogg_files = existing_ogg
     else:
         _uncook_full_archive(config, archive, ogg_dir)
-        ogg_files = list(ogg_dir.rglob("*.Ogg")) + list(ogg_dir.rglob("*.ogg"))
+        ogg_files = list(ogg_dir.rglob("*.ogg"))
 
     if not ogg_files:
         rprint("  [yellow]Warning: no .Ogg files produced by uncook.[/yellow]")

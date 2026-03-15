@@ -287,13 +287,13 @@ def run_radio_pipeline(config: Config) -> Path | None:
 
     # Step A: extract .wem files (resume-friendly: skip if already extracted)
     wem_dir = radio_dir / "wem_files"
-    existing_ogg = list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg")) if wem_dir.exists() else []
+    existing_ogg = list(wem_dir.rglob("*.ogg")) if wem_dir.exists() else []
     if existing_ogg:
         print(f"  Reusing {len(existing_ogg)} existing radio .Ogg file(s)")
         ogg_files = existing_ogg
     else:
         wem_dir = extract_radio_wem_files(config, radio_dir, real_hashes)
-        ogg_files = list(wem_dir.rglob("*.Ogg")) + list(wem_dir.rglob("*.ogg"))
+        ogg_files = list(wem_dir.rglob("*.ogg"))
 
     if not ogg_files:
         print("  Warning: no .Ogg files produced by uncook — check track hashes.")
