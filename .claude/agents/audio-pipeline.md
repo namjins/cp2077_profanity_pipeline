@@ -14,9 +14,9 @@ The audio pipeline has two branches, both rooted in `cp2077_profanity/audio.py` 
 1. Extract voiceover maps from `lang_en_voice.archive` (WolvenKit unbundle + CR2W)
 2. Build `stringId → full depot path` lookup (NOT basenames — path collisions are real)
 3. Match patch records' `stringId` to voiceover map entries
-4. Extract target `.wem` files via WolvenKit `uncook` with regex (batched)
+4. Extract target `.wem` + `.Ogg` files via WolvenKit `uncook` — **one file per invocation** (batch uncook produces identical .Ogg for all files due to shared ww2ogg buffer bug). Concurrent single-file invocations are safe.
 5. Collect `.Ogg` files by full relative depot path
-6. Process with monkeyplug via WSL (parallel workers, auto-resume skips done files)
+6. Process with monkeyplug via WSL (parallel workers)
 7. Convert processed `.Ogg` → `.wem` via sound2wem (enforces 48 kHz sample rate)
 8. Repack: replace `.wem` in extraction tree, remove non-`.wem` files, WolvenKit pack
 
@@ -129,9 +129,10 @@ Understanding this is critical for debugging:
 ## Common Issues & Diagnosis
 
 **Voice lines playing for wrong character / same line repeating**
-- **Primary root cause**: sound2wem invoked once per file produces duplicate .wem output due to Wwise cache corruption and stale file accumulation in the sound2wem directory.
-- Diagnosis: hash all .wem files in `work/audio/processed_wem/` — if unique hashes << total files, this is the bug.
-- Fix: use batched conversion with pre-batch cleanup (now the default in `convert_ogg_to_wem()`).
+- **Primary root cause**: WolvenKit batch uncook produces identical .Ogg content for every file in the batch (internal ww2ogg shared-buffer bug). This corrupted .Ogg propagates through monkeyplug → sound2wem → archive.
+- **Fix**: `extract_target_wem_files()` now uncooks one file per WolvenKit invocation.
+- Diagnosis: hash all .wem files in `work/audio/processed_wem/` — if unique hashes << total files, this is the bug. Also compare processed .Ogg sizes: files from different characters should NOT be the same size.
+- **Stale cache**: Even after fixing extraction, old corrupt files in `processed_ogg/` are reused by monkeyplug's auto-resume. Always clean `wem_files/`, `processed_ogg/`, `processed_wem/` before re-running (the pipeline now does this automatically).
 - Secondary cause: sample rate mismatch (44.1 kHz vs 48 kHz). Verify `--samplerate:48000` is passed.
 
 **"File not found" after monkeyplug**

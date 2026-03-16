@@ -219,8 +219,12 @@ def extract_target_wem_files(
 ) -> Path:
     """Extract specific .wem files (and their .Ogg conversions) from voice archives.
 
-    Uses WolvenKit uncook with --regex to extract matching files in batches.
-    Batches filenames to avoid spinning up WolvenKit once per file.
+    Uses WolvenKit uncook with --regex, one file per invocation.  WolvenKit has a
+    batch-uncook bug where multi-file uncook produces identical .Ogg content for
+    every file in the batch (the internal ww2ogg conversion reuses a shared buffer).
+    Single-file invocations are correct and can safely run in parallel since each
+    writes to a unique output path.
+
     Returns the directory containing the extracted files.
     """
     wem_dir = voice_extract_dir / "wem_files"
@@ -236,17 +240,12 @@ def extract_target_wem_files(
     target_paths = sorted({_normalize_depot_path(p) for p in depot_paths if p})
     print(f"  Extracting {len(target_paths)} target .wem path(s) from {len(archives)} archive(s)...")
 
-    # Batch full depot paths into regex groups to reduce WolvenKit invocations.
-    # Matching full paths avoids basename collisions across different folders.
-    # Limit batch size to avoid command-line length issues.
-    batch_size = 30
-    batches = [target_paths[i : i + batch_size] for i in range(0, len(target_paths), batch_size)]
-
-    def _extract_batch(batch: list[str]) -> None:
-        escaped_paths = [re.escape(p).replace("/", r"[\\/]") for p in batch]
-        regex_pattern = "(" + "|".join(escaped_paths) + r")$"
-        # Extract from archives in deterministic order (base first, EP1 second)
-        # so overlapping depot paths are stable and not subject to write races.
+    def _extract_one(depot_path: str) -> bool:
+        """Uncook a single file from all archives.  Returns True if at least one succeeded."""
+        # Use the basename for the regex — each voice file has a unique hash-based name.
+        basename = depot_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        regex_pattern = f".*{re.escape(basename)}.*"
+        found = False
         for archive in archives:
             cmd = [
                 str(config.wolvenkit_cli),
@@ -256,9 +255,11 @@ def extract_target_wem_files(
                 "--regex", regex_pattern,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0 and result.stderr:
-                print(f"  Warning: uncook failed for batch in {archive.name}: {result.stderr.strip()[:500]}")
+            if "Uncooked 1/" in (result.stdout or "") or "Uncooked" in (result.stdout or ""):
+                found = True
+        return found
 
+    not_found = 0
     with Progress(
         TextColumn("  [bold]{task.description}"),
         BarColumn(),
@@ -266,13 +267,17 @@ def extract_target_wem_files(
         TimeRemainingColumn(),
     ) as progress:
         task = progress.add_task(
-            f"Extracting voice files ({config.workers} workers)", total=len(batches)
+            f"Extracting voice files ({config.workers} workers)", total=len(target_paths)
         )
         with ThreadPoolExecutor(max_workers=config.workers) as executor:
-            futures = {executor.submit(_extract_batch, b): b for b in batches}
+            futures = {executor.submit(_extract_one, dp): dp for dp in target_paths}
             for future in as_completed(futures):
-                future.result()
+                if not future.result():
+                    not_found += 1
                 progress.advance(task)
+
+    if not_found:
+        print(f"  Warning: {not_found} file(s) not found in any archive")
 
     # Log extraction results
     extracted_wem = list(wem_dir.rglob("*.wem"))
@@ -513,6 +518,16 @@ def run_audio_pipeline(config: Config, patch_records: list) -> Path | None:
 
     print(f"  Found {len(targets)} voice line(s) to process ({len(set(dp for _, dp in targets))} unique depot paths)")
     depot_paths = [dp for _, dp in targets]
+
+    # Clean stale intermediate data from previous runs to prevent reusing corrupt
+    # files.  WolvenKit batch-uncook produces identical .Ogg content for every file
+    # in the batch, and monkeyplug caches its output — so stale processed_ogg from
+    # a previous broken run would silently propagate through the entire pipeline.
+    for stale_dir in ["wem_files", "processed_ogg", "processed_wem"]:
+        stale = voice_dir / stale_dir
+        if stale.exists():
+            shutil.rmtree(stale, ignore_errors=True)
+            print(f"  Cleaned stale {stale_dir}/ from previous run")
 
     # Step C: extract target .wem + .Ogg files from voice archive
     wem_dir = extract_target_wem_files(config, voice_dir, depot_paths)

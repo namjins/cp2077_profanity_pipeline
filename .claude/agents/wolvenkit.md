@@ -43,8 +43,14 @@ WolvenKit.CLI.exe uncook "PATH_TO_ARCHIVE" -o "OUTPUT_DIR"
 - Used for voice/radio audio extraction (produces playable .Ogg alongside raw .wem)
 - `--regex PATTERN` — regex filter on internal depot paths (use `$` anchor for exact matching)
 
-**Critical: Concurrent uncook safety**
-Multiple uncook invocations writing to the same output directory can cause file contention. When parallelizing uncook (e.g., batched extraction in audio.py), ensure batches target non-overlapping depot paths. Each batch processes archives sequentially (base before EP1) to keep overlapping paths deterministic.
+**CRITICAL: Batch uncook .Ogg corruption bug**
+WolvenKit's uncook has a critical bug: when uncooking multiple files in a single invocation, the internal ww2ogg conversion produces **identical .Ogg content for every file** in the batch. The raw .wem files are extracted correctly — only the .Ogg conversion is affected.
+
+**Root cause**: WolvenKit's ww2ogg converter appears to reuse a shared buffer or temp file, so all .Ogg files get the content of one file (typically the last converted).
+
+**Workaround**: Always uncook **one file per WolvenKit invocation**. Concurrent single-file invocations (via ThreadPoolExecutor) are safe — each produces correct .Ogg output. This is enforced in `extract_target_wem_files()` in audio.py.
+
+**Diagnosis**: If voice lines are swapped or all sound the same, check processed .Ogg file sizes — files from different characters should NOT be the same size. Hash `processed_wem/` and compare unique count vs total.
 
 ### Pack (repack archive)
 ```

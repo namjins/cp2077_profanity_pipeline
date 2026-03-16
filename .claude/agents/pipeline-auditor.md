@@ -38,10 +38,11 @@ These are bugs that have occurred in this codebase. When reviewing, actively loo
 **Where to look:** Any code that invokes external tools and checks for output files by path. The output might be from a PREVIOUS invocation, not the current one.
 **Files:** `wsl_utils.py` (convert_ogg_to_wem, run_monkeyplug_on_file)
 
-### 3. Concurrent subprocess writes to shared directory (HIGH)
-**What happened:** Multiple ThreadPoolExecutor workers running WolvenKit `uncook` simultaneously, all writing to the same output directory. File contention and partial writes possible.
-**Where to look:** Any `ThreadPoolExecutor` + `subprocess.run` pattern where workers share an output directory. Check if workers could write overlapping file paths.
-**Files:** `audio.py` (extract_target_wem_files), `extractor.py` (extract_archives)
+### 3. WolvenKit batch uncook .Ogg corruption (CRITICAL — fixed)
+**What happened:** WolvenKit `uncook` with multiple files per invocation produces identical .Ogg content for every file (internal ww2ogg shared-buffer bug). Raw .wem files are correct. This was the root cause of voice line swaps — NOT concurrent writes.
+**Fix applied:** `extract_target_wem_files()` now uncooks one file per WolvenKit invocation. Concurrent single-file invocations via ThreadPoolExecutor are safe (each writes to a unique output path with a unique hash-based filename).
+**Where to look:** Any code that batches multiple files into a single WolvenKit `uncook --regex` call. Single-file invocations are correct.
+**Files:** `audio.py` (extract_target_wem_files)
 
 ### 4. Case-insensitive filesystem double-counting (MEDIUM)
 **What happened:** Globbing for both `*.Ogg` and `*.ogg` on Windows (case-insensitive) returns the same files twice, inflating counts and causing duplicate processing.
