@@ -383,3 +383,74 @@ Run `cp2077-profanity discover-radio --config config.toml` first to generate `ra
 
 **`discover-radio` produces no output**
 If `ffprobe` is not available in WSL, install it with `sudo apt install ffmpeg`. If the duration threshold is too high, try `--min-duration 30`.
+
+---
+
+## Hardware Requirements
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| CPU | 4 cores | 8+ cores (controls `workers` in config) |
+| RAM | 8 GB | 16 GB |
+| Disk (free) | 25 GB | 50 GB (work/ intermediates + game files) |
+| GPU | None (CPU-only, very slow) | NVIDIA with 8 GB+ VRAM |
+
+**GPU VRAM by Whisper model (`whisper_model` in config):**
+
+| Model | VRAM | Speed | Use case |
+|-------|------|-------|----------|
+| tiny / base | ~1 GB | Fast | Testing; lower accuracy |
+| small | ~2 GB | Moderate | Good balance |
+| medium | ~5 GB | Slow | Radio pass 2 |
+| large-v3 | ~10 GB | Slowest | Radio pass 1; highest accuracy |
+
+CPU-only is supported but voice and radio processing will be 10–50x slower than with a GPU.
+
+---
+
+## Expected Runtimes
+
+Approximate times on a mid-range machine (8-core CPU, NVIDIA RTX 3080):
+
+| Step | Duration | Notes |
+|------|----------|-------|
+| 1. Extract | 30–60 min | WolvenKit unbundle + parallelized CR2W conversion |
+| 2–3. Scan & Patch | 5–15 min | Regex matching across ~3,000 locale files |
+| 4. Text repack | 10–20 min | CR2W serialization + WolvenKit pack |
+| 5. Voice audio | 2–6 hours | ~13,000 voice files through monkeyplug + Wwise |
+| 6. Radio music | 4–12 hours | 3-pass Whisper pipeline (large-v3 → medium → base) |
+| 7. Package | < 1 min | Zip assembly |
+
+**Total:** 7–20 hours for a full run. Use `--skip-audio --skip-radio` for text-only (under 2 hours).
+
+---
+
+## Work Directory Structure
+
+After a full pipeline run, `work/` grows to 10–20 GB:
+
+```
+work/
+├── extracted/            (~1–2 GB)   Step 1: CR2W-serialized locale JSON files
+│   ├── base/localization/en-us/
+│   └── ep1/localization/en-us/
+│
+├── audio/                (~10–14 GB) Steps 5A–F: Voice line pipeline
+│   ├── voiceover_maps/              Voiceover map JSON — preserved between runs
+│   ├── wem_files/                   Extracted .wem + .Ogg — wiped before each run
+│   ├── processed_ogg/               monkeyplug silenced output — wiped before each run
+│   ├── processed_wem/               sound2wem 48 kHz output — wiped before each run
+│   ├── lang_en_voice.archive        Final repacked voice archive
+│   └── audio_processing_log.csv    Per-file processing status
+│
+└── radio/                (~6–10 GB)  Steps 6A–D: Radio music pipeline
+    ├── wem_files/                   Extracted radio .wem + .Ogg
+    ├── pass_1/                      large-v3 monkeyplug output
+    ├── pass_2/                      medium monkeyplug output
+    ├── pass_3/                      base monkeyplug output
+    ├── processed_wem/               Final 48 kHz .wem
+    ├── audio_2_soundbanks.archive   Final repacked radio archive
+    └── radio_processing_log.csv    Per-track processing status
+```
+
+`voiceover_maps/` is preserved between runs because rebuilding it requires re-extracting and re-converting the voice archive (slow). All other audio intermediates are automatically wiped before each run to prevent stale cache issues.
