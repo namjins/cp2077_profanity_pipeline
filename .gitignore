@@ -18,7 +18,7 @@ config.toml
 
 # macOS
 .DS_Store
-wavtowemscript/wavtowemscript.Marc.validationcache
+wavtowemscript/*.validationcache
 wavtowemscript/wavtowemscript.wproj
 wavtowemscript/.cache/CacheVersion
 wavtowemscript/Actor-Mixer Hierarchy/Default Work Unit.wwu

@@ -143,7 +143,7 @@ cp2077-profanity run -c config.toml --clean
 cli_path = "C:\\Tools\\WolvenKit\\WolvenKit.CLI.exe"
 
 [paths]
-game_dir = "D:\\SteamLibrary\\steamapps\\common\\Cyberpunk 2077"
+game_dir = "C:\\Games\\Cyberpunk 2077"   # adjust to your install path
 work_dir = "./work"
 output_dir = "./output"
 

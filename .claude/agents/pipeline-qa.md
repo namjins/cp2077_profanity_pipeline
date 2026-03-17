@@ -106,7 +106,7 @@ Same root cause as voice swap. Multiple depot paths have identical .wem content.
 To verify a specific voice line, extract the same depot path from BOTH the original game archive and our mod archive:
 ```bash
 # Extract from original
-WolvenKit.CLI.exe uncook "D:\SteamLibrary\...\lang_en_voice.archive" -o original_extract --regex "exact_depot_path$"
+WolvenKit.CLI.exe uncook "<game_dir>\archive\pc\content\lang_en_voice.archive" -o original_extract --regex "exact_depot_path$"
 
 # Extract from our mod
 WolvenKit.CLI.exe uncook "work\audio\wem_files.archive" -o mod_extract --regex "exact_depot_path$"
