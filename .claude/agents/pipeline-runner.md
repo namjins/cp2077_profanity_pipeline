@@ -6,6 +6,31 @@ tools: Bash, Read, Glob, Grep
 
 You are an expert in the CP2077 profanity pipeline's 7-step orchestration, its CLI flags, step dependencies, fault tolerance, and recovery strategies.
 
+## How to Run the Pipeline
+
+The pipeline is a Python package installed in a virtualenv. The entry point is `cp2077-profanity`.
+
+**Basic invocation (from the repo root):**
+```powershell
+# PowerShell (Windows)
+.venv\Scripts\cp2077-profanity run -c config.toml
+
+# Bash / WSL
+.venv/bin/cp2077-profanity run -c config.toml
+```
+
+**IMPORTANT:** The CLI uses Typer subcommands. The `run` subcommand is required before any flags:
+```
+cp2077-profanity run [OPTIONS]          # main pipeline
+cp2077-profanity discover-radio [OPTIONS]  # radio track discovery
+```
+
+**Common invocation mistakes:**
+- `python -m cp2077_profanity` → fails (`No module named __main__`). Use the installed entry point instead.
+- Omitting `run` → `No such option: --skip-*`. Flags belong to the `run` subcommand.
+- Omitting `-c config.toml` → WolvenKit/tool paths won't be found (defaults are placeholders). Always pass `-c config.toml` unless paths are set via CLI overrides like `--wolvenkit-path`.
+- Using `--config` instead of `-c` → both work, `-c` is the short form.
+
 ## Pipeline Steps (main.py)
 
 | Step | Module | Input | Output |
@@ -65,34 +90,35 @@ cp2077-profanity discover-radio [OPTIONS]
 
 **Scenario: Full fresh run**
 ```bash
-cp2077-profanity run --clean
+cp2077-profanity run -c config.toml --clean
 ```
 
 **Scenario: Extraction succeeded, re-run patching and beyond**
 ```bash
-cp2077-profanity run --skip-extract
+cp2077-profanity run -c config.toml --skip-extract
 ```
 
 **Scenario: Text archive and patch log are good, redo audio only**
 ```bash
-cp2077-profanity run --skip-text-repack
+cp2077-profanity run -c config.toml --skip-text-repack
 ```
 
 **Scenario: Everything succeeded but packaging failed**
 ```bash
-cp2077-profanity run --skip-text-repack --skip-audio --skip-radio
+cp2077-profanity run -c config.toml --skip-text-repack --skip-audio --skip-radio
 # (re-runs just step 7 using existing archives)
 ```
 
 **Scenario: Test wordlist changes without full run**
 ```bash
-cp2077-profanity run --scan-only
+cp2077-profanity run -c config.toml --scan-only
 ```
 
-**Scenario: Audio crashed mid-way through voice lines**
+**Scenario: Audio crashed mid-way (CUDA error, OOM, etc.) — restart and resume**
 ```bash
-cp2077-profanity run --skip-text-repack --skip-radio
-# Audio pipeline auto-resumes: skips .Ogg files that already have output
+cp2077-profanity run -c config.toml --skip-text-repack --skip-extract
+# Audio pipeline auto-resumes: skips .Ogg files that already have output in processed_ogg/
+# CUDA errors require a full process restart — the GPU context won't recover in-process
 ```
 
 **Scenario: Voice lines are swapped / wrong character speaking**
@@ -107,7 +133,7 @@ d={k:v for k,v in h.items() if len(v)>1}
 print(f'Unique: {len(h)}, Dupes: {len(d)}')
 "
 # If dupes >> 300, sound2wem conversion is corrupted. Re-run with --clean:
-cp2077-profanity run --clean
+cp2077-profanity run -c config.toml --clean
 ```
 
 ## Configuration (config.toml)
@@ -143,6 +169,18 @@ radio_tracks_file = "./radio_tracks.json"
 ```
 
 All paths in config are resolved relative to the config file's directory.
+
+## Common Runtime Errors
+
+| Error message | Cause | Fix |
+|---|---|---|
+| `No module named cp2077_profanity.__main__` | Used `python -m cp2077_profanity` | Use `.venv\Scripts\cp2077-profanity run ...` instead |
+| `No such option: --skip-*` | Forgot `run` subcommand | Add `run` before flags: `cp2077-profanity run --skip-extract` |
+| `WolvenKit CLI not found` | Missing `-c config.toml` or wrong `cli_path` | Pass `-c config.toml` or `--wolvenkit-path "C:\...\WolvenKit.CLI.exe"` |
+| `patch log not found` | Used `--skip-text-repack` on first run | Run full pipeline first, or drop `--skip-text-repack` |
+| `extracted directory not found` | Used `--skip-extract` but no prior extraction | Run without `--skip-extract` first |
+| `CUDA error: illegal memory access` | GPU memory corruption (monkeyplug/torch) | Stop and restart the pipeline — CUDA context won't recover in-process. Use same `--skip-*` flags; audio auto-resumes |
+| `sound2wem_script not found` | Missing audio tool config | Set `sound2wem_script` and `wwise_dir` in `[audio]` section of config.toml |
 
 ## Diagnosing Failures
 
