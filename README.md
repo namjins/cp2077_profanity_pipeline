@@ -109,7 +109,7 @@ notepad config.toml
 cli_path = "C:\\Tools\\WolvenKit\\WolvenKit.CLI.exe"
 
 [paths]
-game_dir = "D:\\SteamLibrary\\steamapps\\common\\Cyberpunk 2077"
+game_dir = "C:\\Games\\Cyberpunk 2077"   # adjust to your install path
 work_dir = "./work"       # intermediate files (can get large — several GB)
 output_dir = "./output"   # final zip goes here
 
@@ -151,33 +151,33 @@ cd cp2077_profanity_pipeline
 
 ### Full pipeline (text + voice audio + radio music)
 ```powershell
-cp2077-profanity --config config.toml
+cp2077-profanity run --config config.toml
 ```
 
 ### Text only (skip audio and radio — much faster, no WSL required)
 ```powershell
-cp2077-profanity --config config.toml --skip-audio --skip-radio
+cp2077-profanity run --config config.toml --skip-audio --skip-radio
 ```
 
 ### Text + voice audio only (skip radio)
 ```powershell
-cp2077-profanity --config config.toml --skip-radio
+cp2077-profanity run --config config.toml --skip-radio
 ```
 
 ### Re-run without re-extracting (saves ~30–60 min)
 ```powershell
-cp2077-profanity --config config.toml --skip-extract
-cp2077-profanity --config config.toml --skip-extract --skip-audio --skip-radio
+cp2077-profanity run --config config.toml --skip-extract
+cp2077-profanity run --config config.toml --skip-extract --skip-audio --skip-radio
 ```
 
 ### Resume after the text archive has already been built
 ```powershell
-cp2077-profanity --config config.toml --skip-text-repack
+cp2077-profanity run --config config.toml --skip-text-repack
 ```
 
 ### Scan only — preview what would be changed, no files modified
 ```powershell
-cp2077-profanity --config config.toml --scan-only
+cp2077-profanity run --config config.toml --scan-only
 ```
 
 ### All flags
@@ -214,8 +214,8 @@ radio_tracks_file = "./radio_tracks.json"
 ### Step 3: Run the pipeline
 
 ```powershell
-cp2077-profanity --config config.toml --skip-audio   # radio only
-cp2077-profanity --config config.toml                # everything
+cp2077-profanity run --config config.toml --skip-audio   # radio only
+cp2077-profanity run --config config.toml                # everything
 ```
 
 ---
@@ -238,12 +238,12 @@ cp2077-profanity --config config.toml                # everything
 
 1. Create the mod folder if it doesn't exist:
    ```powershell
-   mkdir "D:\SteamLibrary\steamapps\common\Cyberpunk 2077\archive\pc\mod"
+   mkdir "C:\Games\Cyberpunk 2077\archive\pc\mod"
    ```
 
 2. Extract `CP2077ProfanityFilter.zip` into the game root:
    ```powershell
-   Expand-Archive output\CP2077ProfanityFilter.zip -DestinationPath "D:\SteamLibrary\steamapps\common\Cyberpunk 2077"
+   Expand-Archive output\CP2077ProfanityFilter.zip -DestinationPath "C:\Games\Cyberpunk 2077"
    ```
    This places the `.archive` file(s) at `archive\pc\mod\` automatically.
 
